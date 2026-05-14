@@ -1,0 +1,14 @@
+INFO:     Will watch for changes in these directories: ['D:\\callflow-lab\\backend']
+INFO:     Uvicorn running on http://127.0.0.1:8080 (Press CTRL+C to quit)
+INFO:     Started reloader process [72048] using WatchFiles
+INFO:     Started server process [14948]
+INFO:     Waiting for application startup.
+INFO:     Application startup complete.
+WARNING:  WatchFiles detected changes in 'app\services\evaluation_service.py'. Reloading...
+INFO:     Shutting down
+INFO:     Waiting for application shutdown.
+INFO:     Application shutdown complete.
+INFO:     Finished server process [14948]
+INFO:     Started server process [59032]
+INFO:     Waiting for application startup.
+INFO:     Application startup complete.

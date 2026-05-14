@@ -1,0 +1,11 @@
+INFO:     127.0.0.1:1102 - "GET /docs HTTP/1.1" 200 OK
+INFO:     127.0.0.1:4954 - "GET /api/cases?task_id=1 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:4967 - "GET /api/dashboard/summary HTTP/1.1" 200 OK
+INFO:     127.0.0.1:4974 - "GET /api/tasks HTTP/1.1" 200 OK
+INFO:     127.0.0.1:12989 - "POST /api/runs/start HTTP/1.1" 200 OK
+INFO:     127.0.0.1:12989 - "GET /api/runs/3/messages HTTP/1.1" 200 OK
+INFO:     127.0.0.1:12989 - "GET /api/reports/3 HTTP/1.1" 200 OK
+ INFO:     127.0.0.1:10986 - "POST /api/runs/start HTTP/1.1" 200 OK
+INFO:     127.0.0.1:10986 - "GET /api/runs/4/messages HTTP/1.1" 200 OK
+INFO:     127.0.0.1:10986 - "GET /api/reports/4 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:10007 - "GET /docs HTTP/1.1" 200 OK

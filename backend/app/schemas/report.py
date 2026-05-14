@@ -1,0 +1,34 @@
+from datetime import datetime
+from typing import Any, Dict, List
+
+from sqlmodel import SQLModel
+
+
+class ReportRead(SQLModel):
+    report_id: int
+    run_id: int
+    task_id: int
+    case_id: int
+    total_score: float
+    task_completion: float
+    instruction_following: float
+    context_consistency: float
+    safety_compliance: float
+    response_quality: float
+    avg_latency_ms: float
+    total_turns: int
+    failed_rules: List[str]
+    suggestions: List[str]
+    metric_details: Dict[str, Any]
+    failure_cases: List[Dict[str, Any]]
+    explainability: Dict[str, Any]
+    messages: List[Dict[str, Any]]
+    created_at: datetime
+
+
+class ReportSummary(SQLModel):
+    report_id: int
+    total_score: float
+    failed_rules: List[str]
+    suggestions: List[str]
+    key_findings: List[str]
