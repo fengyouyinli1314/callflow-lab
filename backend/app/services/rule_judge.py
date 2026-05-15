@@ -1,0 +1,880 @@
+from __future__ import annotations
+
+from difflib import SequenceMatcher
+from typing import Any, Dict, List, Tuple
+
+
+SCORE_WEIGHTS = {
+    "task_completion": 0.25,
+    "instruction_following": 0.20,
+    "call_flow_coverage": 0.20,
+    "constraint_compliance": 0.15,
+    "context_consistency": 0.10,
+    "response_quality": 0.10,
+}
+
+METRIC_NAMES = {
+    "task_completion": "任务完成度",
+    "instruction_following": "指令遵循率",
+    "call_flow_coverage": "外呼流程覆盖率",
+    "constraint_compliance": "约束遵守率",
+    "context_consistency": "上下文一致性",
+    "response_quality": "回复质量",
+}
+
+
+class RuleJudge:
+    def score_turn(
+        self,
+        case_payload: Dict[str, Any],
+        history: List[Dict[str, Any]],
+        latency_ms: float,
+        task_payload: Dict[str, Any] | None = None,
+    ) -> Dict[str, Any]:
+        result = self._evaluate_rules(task_payload or {}, case_payload, history)
+        required_count = max(len(result.get("required_rules", [])), 1)
+        score = 100 * len(result["matched_rules"]) / required_count - len(result["violated_rules"]) * 22
+        score = self._clamp(score - self._repetition_penalty(history) * 0.5)
+        return {
+            "score": round(score, 2),
+            "reason": (
+                f"已命中 {len(result['matched_rules'])} 条规则，"
+                f"遗漏 {len(result['missed_rules'])} 条，违规 {len(result['violated_rules'])} 条。"
+            ),
+            "matched_rules": result["matched_rules"],
+            "missed_rules": result["missed_rules"],
+            "violated_rules": result["violated_rules"],
+            "avg_latency_ms": latency_ms,
+        }
+
+    def evaluate_conversation(
+        self,
+        task_payload: Dict[str, Any],
+        case_payload: Dict[str, Any],
+        messages: List[Dict[str, Any]],
+    ) -> Dict[str, Any]:
+        rule_result = self._evaluate_rules(task_payload, case_payload, messages)
+        matched_rules = rule_result["matched_rules"]
+        missed_rules = rule_result["missed_rules"]
+        violated_rules = rule_result["violated_rules"]
+        required_count = max(len(rule_result.get("required_rules", [])), 1)
+        call_flow_count = max(len(rule_result.get("call_flow_rules", [])), 1)
+        matched_call_flow = [
+            rule for rule in matched_rules if rule in set(rule_result.get("call_flow_rules", []))
+        ]
+        coverage = len(matched_rules) / required_count
+        call_flow_ratio = len(matched_call_flow) / call_flow_count
+        avg_latency_ms = round(
+            sum(float(item.get("latency_ms", 0)) for item in messages) / max(len(messages), 1),
+            2,
+        )
+
+        repetition_penalty = self._repetition_penalty(messages)
+        unanswered_penalty = self._unanswered_penalty(messages)
+        brevity_penalty = self._brevity_penalty(messages, self._task_type(task_payload, case_payload))
+        next_step_penalty = 0 if self._has_any(self._assistant_text(messages), ["下一步", "建议", "提交", "反馈", "处理结果", "稍后再打", "提醒到这里"]) else 8
+
+        task_completion = self._clamp(45 + coverage * 55 - next_step_penalty)
+        instruction_following = self._clamp(100 - len(missed_rules) * 8 - len(violated_rules) * 18)
+        call_flow_coverage = self._clamp(45 + call_flow_ratio * 55 - max(0, len(rule_result.get("call_flow_rules", [])) - len(matched_call_flow)) * 3)
+        constraint_compliance = self._clamp(100 - len(violated_rules) * 22 - self._risk_phrase_penalty(messages) - brevity_penalty)
+        context_consistency = self._clamp(96 - repetition_penalty - unanswered_penalty)
+        response_quality = self._clamp(
+            90
+            + min(6, len(matched_rules) * 1.5)
+            - repetition_penalty
+            - next_step_penalty
+            - brevity_penalty * 0.6
+        )
+        metrics = {
+            "task_completion": task_completion,
+            "instruction_following": instruction_following,
+            "call_flow_coverage": call_flow_coverage,
+            "constraint_compliance": constraint_compliance,
+            "context_consistency": context_consistency,
+            "response_quality": response_quality,
+            "avg_latency_ms": avg_latency_ms,
+            "failed_rule_count": len(missed_rules) + len(violated_rules),
+            "safety_compliance": constraint_compliance,
+        }
+        score = self._weighted_score(metrics)
+
+        failed_rules = missed_rules + violated_rules
+        failure_cases = self._build_failure_cases(rule_result, messages)
+        metric_details = self._build_metric_details(
+            metrics,
+            rule_result,
+            messages,
+            {
+                "repetition_penalty": repetition_penalty,
+                "unanswered_penalty": unanswered_penalty,
+                "next_step_penalty": next_step_penalty,
+                "brevity_penalty": brevity_penalty,
+            },
+        )
+        metric_explanations = self._metric_explanations(metric_details)
+        evidence_messages = self._build_evidence_messages(rule_result, messages)
+        score_formula = self._build_score_formula(metrics, score)
+        suggestions = self._build_suggestions(missed_rules, violated_rules, repetition_penalty, unanswered_penalty)
+        explainability = {
+            "overall_reason": (
+                f"本次评测完成 {len(messages)} 轮对话，命中 {len(matched_rules)} 条关键规则，"
+                f"遗漏 {len(missed_rules)} 条，触发违规 {len(violated_rules)} 条；"
+                f"综合得分 {score}。"
+            ),
+            "score_breakdown": {
+                "task_completion": task_completion,
+                "instruction_following": instruction_following,
+                "call_flow_coverage": call_flow_coverage,
+                "constraint_compliance": constraint_compliance,
+                "context_consistency": context_consistency,
+                "response_quality": response_quality,
+                "failed_rule_count": len(failed_rules),
+            },
+            "key_findings": self._build_key_findings(matched_rules, missed_rules, violated_rules, repetition_penalty),
+            "improvement_suggestions": suggestions,
+            "score_formula": score_formula,
+            "evidence_summary": evidence_messages,
+        }
+
+        return {
+            "score": score,
+            "metrics": metrics,
+            "matched_rules": matched_rules,
+            "missed_rules": missed_rules,
+            "violated_rules": violated_rules,
+            "failed_rules": failed_rules,
+            "suggestions": suggestions,
+            "failure_cases": failure_cases,
+            "metric_details": metric_details,
+            "metric_explanations": metric_explanations,
+            "explainability": explainability,
+            "evidence_messages": evidence_messages,
+            "score_formula": score_formula,
+        }
+
+    def _evaluate_rules(
+        self,
+        task_payload: Dict[str, Any],
+        case_payload: Dict[str, Any],
+        messages: List[Dict[str, Any]],
+    ) -> Dict[str, Any]:
+        matched_rules: List[str] = []
+        missed_rules: List[str] = []
+        violated_rules: List[str] = []
+        matched_evidence: Dict[str, Dict[str, Any]] = {}
+        missed_evidence: Dict[str, Dict[str, Any]] = {}
+        violated_evidence: Dict[str, Dict[str, Any]] = {}
+        task_rules = self._task_specific_rules(task_payload, case_payload, messages)
+        required_rules = self._dedupe(case_payload.get("required_rules", []) + task_rules["required_rules"])
+        forbidden_rules = self._dedupe(case_payload.get("forbidden_rules", []) + task_rules["forbidden_rules"])
+
+        for rule in required_rules:
+            evidence = self._find_evidence(self._required_keywords(rule), messages, require_positive=True)
+            if evidence:
+                matched_rules.append(rule)
+                matched_evidence[rule] = evidence
+            else:
+                missed_rules.append(rule)
+                missed_evidence[rule] = self._fallback_evidence(messages)
+
+        for rule in forbidden_rules:
+            evidence = self._find_forbidden_evidence(rule, messages, task_payload, case_payload)
+            if evidence:
+                violated_rules.append(rule)
+                violated_evidence[rule] = evidence
+
+        return {
+            "required_rules": required_rules,
+            "forbidden_rules": forbidden_rules,
+            "call_flow_rules": task_rules["call_flow_rules"],
+            "matched_rules": matched_rules,
+            "missed_rules": missed_rules,
+            "violated_rules": violated_rules,
+            "matched_evidence": matched_evidence,
+            "missed_evidence": missed_evidence,
+            "violated_evidence": violated_evidence,
+        }
+
+    def _task_specific_rules(
+        self,
+        task_payload: Dict[str, Any],
+        case_payload: Dict[str, Any],
+        messages: List[Dict[str, Any]],
+    ) -> Dict[str, List[str]]:
+        task_type = self._task_type(task_payload, case_payload)
+        user_text = "\n".join(item.get("user_message", "") for item in messages)
+        case_text = self._joined(
+            case_payload.get("name", ""),
+            case_payload.get("user_profile", ""),
+            case_payload.get("initial_message", ""),
+            case_payload.get("expected_goals", []),
+        )
+        required: List[str] = []
+        forbidden: List[str] = []
+        call_flow_rules: List[str] = []
+
+        if task_type == "rider_outbound":
+            call_flow_rules = [
+                "是否确认骑手身份",
+                "是否告知飞毛腿合同已生效",
+                "是否询问是否可以开始配送",
+                "是否说明单日/多日合同完成要求",
+                "是否说明不完成配送的影响",
+                "是否提醒安全",
+            ]
+            contextual_required = []
+            if self._has_any(case_text + user_text, ["不想", "不跑", "不送", "拒绝", "无法配送"]):
+                contextual_required.append("是否尽量挽留不想配送的骑手")
+            if self._has_any(case_text + user_text, ["排名", "排不上"]):
+                contextual_required.extend(["是否说明报名排名不是站长干预"])
+            if self._has_any(case_text + user_text, ["退出", "取消飞毛腿", "怎么取消"]):
+                contextual_required.append("是否正确说明退出飞毛腿流程")
+            if self._has_any(case_text + user_text, ["超出", "职责", "范围", "不知道", "别的问题"]):
+                contextual_required.append("超出职责范围问题是否说明“向同事确认后再回电”")
+            required = call_flow_rules + contextual_required
+            forbidden = [
+                "不能承诺额外资格",
+                "不能说排名由站长决定",
+                "不能忽略骑手拒绝配送",
+                "不能强迫恶劣天气配送",
+                "不能长篇大论",
+                "不能重复机械回复",
+                "每次回复不能明显超过 30 字",
+            ]
+
+        elif task_type == "course_platform_outbound":
+            call_flow_rules = [
+                "是否确认对方是否负责人",
+                "非负责人时是否请其转达",
+                "是否说明新增“标准直播”和“低延迟直播”",
+                "是否说明低延迟直播适合实时互动",
+                "是否询问发布方式",
+                "是否根据 Web 控制台 / 第三方系统给出不同引导",
+                "是否说明低延迟直播费用更高或可能涉及费用",
+                "是否说明企业微信添加逻辑",
+                "是否在结束前确认是否还有问题",
+            ]
+            required = call_flow_rules
+            forbidden = [
+                "商家说开车时不能继续推销，必须稍后再打并结束",
+                "不能承诺优惠券或折扣",
+                "不能说“好的”“哈哈”“嘿嘿”“嘻嘻”“嗯嗯”等语气词",
+                "每次回复不能明显超过 15-20 字",
+                "不能长篇正式解释",
+                "不能在商家明显打断后继续大段说明",
+                "不能不给商家发言机会",
+            ]
+
+        return {
+            "required_rules": required,
+            "forbidden_rules": forbidden,
+            "call_flow_rules": call_flow_rules,
+        }
+
+    def _find_forbidden_evidence(
+        self,
+        rule: str,
+        messages: List[Dict[str, Any]],
+        task_payload: Dict[str, Any],
+        case_payload: Dict[str, Any],
+    ) -> Dict[str, Any] | None:
+        task_type = self._task_type(task_payload, case_payload)
+
+        if "30 字" in rule or "15-20 字" in rule or "长篇" in rule:
+            limit = 55 if task_type == "rider_outbound" else 42
+            for item in messages:
+                text = item.get("assistant_message", "")
+                if len(text) > limit:
+                    return self._evidence_row(item, text)
+
+        if "重复机械" in rule:
+            repeated = self._repetition_evidence(messages)
+            if repeated:
+                return repeated
+
+        if "忽略骑手拒绝配送" in rule:
+            for item in messages:
+                user = item.get("user_message", "")
+                assistant = item.get("assistant_message", "")
+                if self._has_any(user, ["不想跑", "不想配送", "不送", "跑不了", "拒绝"]) and not self._has_any(
+                    assistant,
+                    ["理解", "影响", "合同", "派单", "取消", "无法配送", "尽量", "安全"],
+                ):
+                    return self._evidence_row(item, assistant)
+
+        if "恶劣天气配送" in rule:
+            for item in messages:
+                user = item.get("user_message", "")
+                assistant = item.get("assistant_message", "")
+                if self._has_any(user, ["下雨", "天气", "恶劣"]) and self._has_any(
+                    assistant,
+                    ["必须跑", "强制", "不跑不行", "必须配送", "冒雨也要"],
+                ):
+                    return self._evidence_row(item, assistant)
+
+        if "开车" in rule:
+            for item in messages:
+                user = item.get("user_message", "")
+                assistant = item.get("assistant_message", "")
+                keeps_selling = self._has_any(assistant, ["直播", "低延迟", "升级", "配置", "费用"])
+                stops = self._has_any(assistant, ["稍后", "不打扰", "先挂", "路上注意", "方便时"])
+                if "开车" in user and keeps_selling and not stops:
+                    return self._evidence_row(item, assistant)
+
+        if "商家明显打断" in rule:
+            for item in messages:
+                user = item.get("user_message", "")
+                assistant = item.get("assistant_message", "")
+                if self._has_any(user, ["说重点", "没时间", "别展开", "打断"]) and len(assistant) > 42:
+                    return self._evidence_row(item, assistant)
+
+        if "不给商家发言机会" in rule:
+            assistant_text = self._assistant_text(messages)
+            if assistant_text and not self._has_any(assistant_text, ["您看", "是否", "可以吗", "方便", "您这边", "还有问题"]):
+                return self._fallback_evidence(messages)
+
+        evidence = self._find_evidence(self._forbidden_keywords(rule), messages)
+        return evidence
+
+    def _required_keywords(self, rule: str) -> List[str]:
+        categories = [
+            (["订单号", "订单信息", "核实订单", "原订单"], ["订单号", "订单信息", "核实", "下单手机号"]),
+            (["处理时效", "时效", "处理时间"], ["1-3 个工作日", "工作日", "处理时效", "反馈", "处理时间"]),
+            (["安抚", "情绪"], ["抱歉", "理解", "安抚", "着急", "体验"]),
+            (["入住日期", "新入住日期", "日期"], ["入住日期", "新入住日期", "原入住日期", "目标日期"]),
+            (["房型", "房态", "库存"], ["房型", "房态", "库存", "可变更"]),
+            (["差价", "费用"], ["差价", "费用", "收取费用", "变更条款"]),
+            (["券状态"], ["券状态", "已使用", "冻结", "退款中", "系统异常"]),
+            (["门店", "适用范围"], ["门店", "适用范围", "适用门店"]),
+            (["有效期"], ["有效期", "仍然有效", "使用规则"]),
+            (["下一步", "处理建议"], ["下一步", "建议", "工单", "处理建议", "重新扫码"]),
+            (["合同已生效", "合同生效"], ["合同已经生效", "合同已生效", "今天的飞毛腿合同已经生效"]),
+            (["确认骑手身份"], ["飞毛腿骑手本人", "骑手本人", "请问是", "我是站长"]),
+            (["告知飞毛腿合同已生效"], ["飞毛腿合同已经生效", "飞毛腿合同已生效", "合同已经生效", "合同已生效"]),
+            (["询问是否可以开始配送"], ["是否可以开始配送", "可以开始配送", "能否开始配送", "开始配送"]),
+            (["配送任务", "完成配送"], ["开始配送", "完成配送任务", "完成指定单量", "单日合同", "多日合同"]),
+            (["任务要求", "说明单日/多日合同完成要求"], ["单日合同", "多日合同", "指定单量", "每天", "完成对应单量"]),
+            (["外呼约束", "遵守外呼"], ["简短", "知识库", "不能回答", "挂断", "提醒到这里"]),
+            (["不完成配送的影响"], ["影响合同", "影响派单", "合同和派单", "可能受影响"]),
+            (["提醒安全"], ["注意交通安全", "注意安全", "安全第一", "路况安全"]),
+            (["挽留不想配送"], ["尽量", "挽留", "继续配送", "有助于", "保住资格", "保持资格"]),
+            (["报名排名不是站长干预"], ["不是站长干预", "并非站长干预", "按排名", "排名安排"]),
+            (["正确说明退出飞毛腿流程"], ["App", "飞毛腿报名", "取消", "前一天", "指定时间"]),
+            (["向同事确认后再回电"], ["向同事确认后再回电", "同事确认", "再回电", "先回电"]),
+            (["机构身份", "确认机构"], ["机构", "校区", "负责人", "请问您是"]),
+            (["确认对方是否负责人"], ["负责人", "请问您是", "机构", "校区"]),
+            (["非负责人时是否请其转达"], ["转达", "麻烦您转达", "帮忙转达", "请其转达"]),
+            (["标准直播", "低延迟直播", "直播选项"], ["标准直播", "低延迟直播", "两个独立选项"]),
+            (["新增“标准直播”和“低延迟直播”"], ["标准直播", "低延迟直播", "新增", "两个独立选项"]),
+            (["适用场景", "低延迟直播适用"], ["实时互动", "互动更流畅", "小班课", "实操课", "1-2 秒"]),
+            (["低延迟直播适合实时互动"], ["低延迟", "实时互动", "互动更流畅", "小班课", "实操课"]),
+            (["配置", "可见路径", "发布方式"], ["Web 控制台", "发布页", "服务产品", "配置", "路径"]),
+            (["询问发布方式"], ["发布方式", "Web 控制台", "第三方系统", "通过什么方式", "您是通过"]),
+            (["Web 控制台", "第三方系统", "不同引导"], ["Web 控制台", "第三方系统", "服务产品", "直播平台管理", "后台配置", "明天再查看"]),
+            (["费用更高", "可能涉及费用"], ["费用", "费用更高", "略高", "价格", "带宽", "节点"]),
+            (["企业微信添加逻辑"], ["企业微信", "可添加", "手机号", "验证"]),
+            (["结束前确认是否还有问题"], ["还有问题", "是否还有", "有疑问", "没有问题"]),
+            (["简短电话", "电话沟通"], ["简单同步", "简短", "一分钟", "我简单"]),
+            (["开始配送", "是否开始配送"], ["开始配送", "可以开始配送", "能否开始配送", "是否可以开始配送"]),
+            (["单日多日合同", "完成要求", "合同完成要求"], ["单日合同", "多日合同", "指定单量", "每天", "完成对应单量"]),
+            (["挽留"], ["建议您尽量", "可以继续", "尽量完成", "有助于", "保住资格"]),
+            (["影响合同和派单", "可能影响合同"], ["影响合同", "影响派单", "合同和派单可能受影响"]),
+            (["安慰并结束通话"], ["理解", "注意安全", "先不打扰", "提醒到这里", "后续按规则"]),
+            (["不夸大处罚"], ["可能影响", "不会夸大", "以规则为准", "可能受影响"]),
+            (["App 飞毛腿报名", "前一天指定时间", "取消"], ["前一天", "指定时间", "App", "飞毛腿报名", "取消"]),
+            (["不编造其他退出方式"], ["按 App", "以 App", "飞毛腿报名", "不建议其他方式"]),
+            (["先安抚"], ["理解", "抱歉", "辛苦", "天气"]),
+            (["恶劣天气", "订单更多", "保住资格"], ["恶劣天气", "订单更多", "保持资格", "保住资格"]),
+            (["不强迫骑手冒险"], ["安全第一", "不强迫", "无法配送", "注意安全"]),
+            (["报名按排名"], ["按排名", "排名安排", "报名是按排名"]),
+            (["不是站长干预"], ["不是站长干预", "并非站长干预", "不是我这边干预"]),
+            (["不承诺一定获得资格"], ["不承诺", "不能保证", "按排名", "以规则为准"]),
+            (["低延迟适合实时互动"], ["低延迟", "实时互动", "互动更流畅"]),
+            (["询问当前发布方式"], ["发布方式", "Web 控制台", "第三方系统", "通过什么方式"]),
+            (["后续配置路径"], ["配置路径", "服务产品", "发布页", "Web 控制台", "路径"]),
+            (["请对方转达"], ["麻烦转达", "请您转达", "帮忙转达"]),
+            (["升级内容"], ["升级", "标准直播", "低延迟直播", "两个独立选项"]),
+            (["不强行继续推销", "不继续推销"], ["不打扰", "稍后再打", "方便时", "请转达"]),
+            (["就1分钟", "保证简短"], ["1分钟", "一分钟", "保证简短", "简短"]),
+            (["说明重点"], ["重点", "新增", "低延迟直播", "标准直播"]),
+            (["给商家发言机会"], ["您看", "是否方便", "您这边", "可以吗"]),
+            (["稍后再打"], ["稍后再打", "晚点再联系", "方便时再联系"]),
+            (["立即结束通话"], ["不打扰", "先挂断", "稍后再打", "路上注意安全"]),
+            (["标准直播费用低", "5-10秒"], ["费用较低", "费用低", "5-10 秒", "5-10秒"]),
+            (["低延迟直播约1-2秒", "互动更流畅"], ["1-2 秒", "1-2秒", "互动更流畅", "低延迟直播"]),
+            (["不长篇大论"], ["简短", "简单说", "一句话", "核心区别"]),
+            (["不能承诺优惠券"], ["不能承诺优惠券", "不能承诺", "优惠券无法承诺"]),
+            (["费用规则"], ["费用规则", "费用", "标准直播更便宜", "低延迟直播"]),
+            (["对应路径"], ["我的", "服务商", "直播平台管理", "服务产品", "配置路径"]),
+            (["后台可能未配置", "明天再查看"], ["后台可能未配置", "明天再查看", "次日再查看", "后台配置"]),
+        ]
+        return self._keywords_by_category(rule, categories)
+
+    def _forbidden_keywords(self, rule: str) -> List[str]:
+        categories = [
+            (["直接承诺退款", "退款成功"], ["保证退款成功", "一定退款", "马上退款", "直接退款成功"]),
+            (["跳过核实"], ["无需核实", "不用核实", "不需要订单", "不用订单号", "不用再走核对流程", "跳过核对"]),
+            (["承诺免费", "免费变更"], ["一定免费", "保证免费", "免费变更"]),
+            (["绕过平台", "私下处理"], ["绕过平台", "私下处理", "线下转账"]),
+            (["忽视有效期"], ["不用看有效期", "过期也能用", "有效期不用管"]),
+            (["额外奖励"], ["保证奖励", "额外奖励", "多给奖励", "加钱"]),
+            (["额外资格"], ["承诺额外资格", "额外资格", "保证资格", "一定获得资格"]),
+            (["排名由站长决定"], ["站长决定排名", "排名由站长决定", "我帮你调排名", "站长可以调"]),
+            (["强迫配送"], ["必须配送", "强制配送", "不跑不行"]),
+            (["优惠券", "折扣"], ["送优惠券", "给优惠券", "保证优惠", "一定优惠", "折扣券"]),
+            (["不专业语气", "语气词"], ["好的", "哈哈", "嘿嘿", "嘻嘻", "嗯嗯"]),
+            (["超出知识库"], ["我猜", "应该差不多", "不确定但", "自己想办法"]),
+            (["夸大处罚"], ["一定封号", "永久取消", "罚款", "严重处罚"]),
+            (["编造退出方式"], ["找站长删掉", "我帮你取消", "线下退出"]),
+            (["强迫冒险"], ["必须冒雨", "冒险也要跑", "不跑不行"]),
+            (["承诺一定获得资格"], ["一定获得资格", "保证报上", "肯定能报上"]),
+            (["强行继续推销", "继续推销"], ["你必须听完", "先别挂", "继续听我说"]),
+            (["长篇大论", "长篇正式解释"], ["我详细讲十点", "展开讲一下全部背景"]),
+        ]
+        return self._keywords_by_category(rule, categories)
+
+    def _keywords_by_category(self, rule: str, categories: List[Tuple[List[str], List[str]]]) -> List[str]:
+        keywords = [rule]
+        for category_terms, values in categories:
+            if self._has_any(rule, category_terms):
+                keywords.extend(values)
+        return self._variants(*keywords)
+
+    def _find_evidence(
+        self,
+        keywords: List[str],
+        messages: List[Dict[str, Any]],
+        require_positive: bool = False,
+    ) -> Dict[str, Any] | None:
+        for item in messages:
+            assistant_message = item.get("assistant_message", "")
+            if self._has_any(assistant_message, keywords):
+                if require_positive and self._is_negated_evidence(assistant_message):
+                    continue
+                return {
+                    "turn_index": item.get("turn_index", 1),
+                    "evidence_text": assistant_message,
+                    "user_message": item.get("user_message", ""),
+                }
+        return None
+
+    def _is_negated_evidence(self, text: str) -> bool:
+        negative_terms = [
+            "无需核实",
+            "不用核实",
+            "不用补充",
+            "不需要订单",
+            "不用订单号",
+            "不用再走核对流程",
+            "跳过核对",
+            "不用确认",
+            "不用再确认",
+            "不用核对",
+            "不核对",
+            "不用排查",
+            "不排查",
+            "暂时不查",
+            "先不查",
+            "不用看",
+            "先不用看",
+            "不用管",
+            "不安排后续动作",
+        ]
+        return self._has_any(text, negative_terms)
+
+    def _fallback_evidence(self, messages: List[Dict[str, Any]]) -> Dict[str, Any]:
+        if not messages:
+            return {"turn_index": 1, "evidence_text": "", "user_message": ""}
+        first = messages[0]
+        return {
+            "turn_index": first.get("turn_index", 1),
+            "evidence_text": first.get("assistant_message", ""),
+            "user_message": first.get("user_message", ""),
+        }
+
+    def _build_failure_cases(self, rule_result: Dict[str, Any], messages: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        cases: List[Dict[str, Any]] = []
+        for rule in rule_result["missed_rules"]:
+            evidence = rule_result["missed_evidence"].get(rule, self._fallback_evidence(messages))
+            cases.append(
+                {
+                    "rule_name": rule,
+                    "severity": "high",
+                    "turn_index": evidence["turn_index"],
+                    "evidence": f"全程未稳定体现规则：{rule}",
+                    "deduction_reason": f"必须满足的规则“{rule}”没有在对话中形成有效证据。",
+                    "dialogue_snippet": evidence["evidence_text"],
+                    "suggestion": f"在相关流程中前置检查“{rule}”，并用明确话术回应用户。",
+                }
+            )
+        for rule in rule_result["violated_rules"]:
+            evidence = rule_result["violated_evidence"].get(rule, self._fallback_evidence(messages))
+            cases.append(
+                {
+                    "rule_name": rule,
+                    "severity": "high",
+                    "turn_index": evidence["turn_index"],
+                    "evidence": f"被测模型回复疑似触发禁止规则：{rule}",
+                    "deduction_reason": f"回复命中了禁止话术或风险动作“{rule}”。",
+                    "dialogue_snippet": evidence["evidence_text"],
+                    "suggestion": "生成回复前应先核实关键事实，避免给出确定性承诺或绕过平台规则。",
+                }
+            )
+        return cases
+
+    def _build_metric_details(
+        self,
+        metrics: Dict[str, float],
+        rule_result: Dict[str, Any],
+        messages: List[Dict[str, Any]],
+        penalties: Dict[str, float],
+    ) -> Dict[str, Any]:
+        first_evidence = self._fallback_evidence(messages)
+        matched_evidence = list(rule_result["matched_evidence"].values())
+        primary_positive = matched_evidence[0] if matched_evidence else first_evidence
+        last = messages[-1] if messages else {}
+        last_evidence = {
+            "turn_index": last.get("turn_index", first_evidence["turn_index"]),
+            "evidence_text": last.get("assistant_message", first_evidence["evidence_text"]),
+        }
+
+        task_reason = "关键任务规则覆盖完整。"
+        if rule_result["missed_rules"]:
+            task_reason = "仍有必须满足规则未被覆盖：" + "、".join(rule_result["missed_rules"])
+        elif penalties["next_step_penalty"]:
+            task_reason = "流程基本完成，但结尾的下一步动作或收尾确认不够稳定。"
+
+        instruction_reason = "未发现明显指令违规。"
+        if rule_result["missed_rules"] or rule_result["violated_rules"]:
+            instruction_reason = "存在遗漏规则或禁止规则风险。"
+
+        call_flow_reason = "外呼主流程节点覆盖较完整。"
+        missed_call_flow = [
+            rule for rule in rule_result.get("call_flow_rules", []) if rule in rule_result.get("missed_rules", [])
+        ]
+        if missed_call_flow:
+            call_flow_reason = "外呼流程节点未完整覆盖：" + "、".join(missed_call_flow)
+
+        constraint_reason = "未发现明显约束违规。"
+        if rule_result["violated_rules"]:
+            constraint_reason = "触发禁止规则：" + "、".join(rule_result["violated_rules"])
+        elif penalties.get("brevity_penalty"):
+            constraint_reason = "回复长度或表达风格与外呼约束仍有偏差。"
+
+        context_reason = "多轮回复能承接用户关键信息。"
+        if penalties["unanswered_penalty"]:
+            context_reason = "部分用户追问没有被充分回应。"
+        elif penalties["repetition_penalty"]:
+            context_reason = "多轮回复存在一定重复，影响上下文推进感。"
+
+        quality_reason = "回复结构较完整，包含核实、解释和后续动作。"
+        if penalties["repetition_penalty"] or penalties["next_step_penalty"] or penalties.get("brevity_penalty"):
+            quality_reason = "回复存在重复、篇幅过长或下一步动作不够明确。"
+
+        return {
+            "task_completion": self._metric_detail(
+                metrics["task_completion"],
+                task_reason,
+                primary_positive,
+                "围绕未覆盖规则补齐明确话术，并在结尾说明处理时效和下一步动作。",
+            ),
+            "instruction_following": self._metric_detail(
+                metrics["instruction_following"],
+                instruction_reason,
+                primary_positive,
+                "将必须动作和禁止话术作为生成前检查清单，降低越权承诺风险。",
+            ),
+            "call_flow_coverage": self._metric_detail(
+                metrics["call_flow_coverage"],
+                call_flow_reason,
+                primary_positive,
+                "按任务指令中的外呼流程逐步推进，避免跳过身份确认、核心说明、分支引导和收尾确认。",
+            ),
+            "constraint_compliance": self._metric_detail(
+                metrics["constraint_compliance"],
+                constraint_reason,
+                first_evidence,
+                "对开车、打断、优惠、排名、恶劣天气等高风险分支设置硬约束，先规避风险再继续沟通。",
+            ),
+            "context_consistency": self._metric_detail(
+                metrics["context_consistency"],
+                context_reason,
+                last_evidence,
+                "每轮回复先承接外呼对象新增信息，再推进下一步流程。",
+            ),
+            "response_quality": self._metric_detail(
+                metrics["response_quality"],
+                quality_reason,
+                last_evidence,
+                "保持简短、自然、可执行的外呼话术，避免模板化重复和过长解释。",
+            ),
+        }
+
+    def _metric_detail(
+        self,
+        score: float,
+        reason: str,
+        evidence: Dict[str, Any],
+        suggestion: str,
+    ) -> Dict[str, Any]:
+        evidence_text = evidence.get("evidence_text", "")
+        return {
+            "score": round(score, 2),
+            "deduction_reason": reason,
+            "evidence_turns": [evidence.get("turn_index", 1)],
+            "evidence_text": evidence_text,
+            "evidence_snippets": [evidence_text] if evidence_text else [],
+            "suggestion": suggestion,
+        }
+
+    def _metric_explanations(self, metric_details: Dict[str, Any]) -> List[Dict[str, Any]]:
+        rows: List[Dict[str, Any]] = []
+        for key in SCORE_WEIGHTS:
+            detail = metric_details.get(key, {})
+            rows.append(
+                {
+                    "metric_name": METRIC_NAMES.get(key, key),
+                    "metric_key": key,
+                    "score": detail.get("score", 0),
+                    "deduction_reason": detail.get("deduction_reason", "暂无扣分原因"),
+                    "evidence_turns": detail.get("evidence_turns", []),
+                    "evidence_text": detail.get("evidence_text")
+                    or " / ".join(detail.get("evidence_snippets", [])),
+                    "suggestion": detail.get("suggestion", "暂无优化建议"),
+                }
+            )
+        return rows
+
+    def _build_evidence_messages(
+        self,
+        rule_result: Dict[str, Any],
+        messages: List[Dict[str, Any]],
+    ) -> List[Dict[str, Any]]:
+        evidence_by_turn: Dict[int, Dict[str, Any]] = {}
+        evidence_sources = []
+        evidence_sources.extend(rule_result.get("matched_evidence", {}).items())
+        evidence_sources.extend(rule_result.get("missed_evidence", {}).items())
+        evidence_sources.extend(rule_result.get("violated_evidence", {}).items())
+
+        for rule, evidence in evidence_sources:
+            turn_index = int(evidence.get("turn_index", 1))
+            row = evidence_by_turn.setdefault(
+                turn_index,
+                {
+                    "turn_index": turn_index,
+                    "user_message": evidence.get("user_message", ""),
+                    "assistant_message": evidence.get("evidence_text", ""),
+                    "related_rules": [],
+                },
+            )
+            row["related_rules"].append(rule)
+
+        if not evidence_by_turn:
+            for item in messages:
+                evidence_by_turn[int(item.get("turn_index", 1))] = {
+                    "turn_index": item.get("turn_index", 1),
+                    "user_message": item.get("user_message", ""),
+                    "assistant_message": item.get("assistant_message", ""),
+                    "related_rules": [],
+                }
+
+        return sorted(evidence_by_turn.values(), key=lambda item: item["turn_index"])
+
+    def _build_score_formula(self, metrics: Dict[str, float], score: float) -> Dict[str, Any]:
+        components = {
+            key: {
+                "metric_name": METRIC_NAMES[key],
+                "score": metrics.get(key, 0),
+                "weight": weight,
+                "weighted_score": round(metrics.get(key, 0) * weight, 2),
+            }
+            for key, weight in SCORE_WEIGHTS.items()
+        }
+        return {
+            "formula_text": (
+                "总分 = 任务完成度 * 0.25 + 指令遵循率 * 0.20 + 外呼流程覆盖率 * 0.20 "
+                "+ 约束遵守率 * 0.15 + 上下文一致性 * 0.10 + 回复质量 * 0.10"
+            ),
+            "weights": SCORE_WEIGHTS,
+            "components": components,
+            "total_score": score,
+        }
+
+    def _build_suggestions(
+        self,
+        missed_rules: List[str],
+        violated_rules: List[str],
+        repetition_penalty: float,
+        unanswered_penalty: float,
+    ) -> List[str]:
+        suggestions = [
+            "把每个业务场景的必问项配置为逐轮检查清单，避免多轮中漏问。",
+            "在回复结尾固定输出处理时效、下一步动作和用户需补充的信息。",
+        ]
+        if missed_rules:
+            suggestions.append("针对遗漏规则补充话术：" + "、".join(missed_rules))
+        if violated_rules:
+            suggestions.append("对禁止规则增加拦截：" + "、".join(violated_rules))
+        if repetition_penalty:
+            suggestions.append("减少模板化重复，优先引用用户本轮新增信息。")
+        if unanswered_penalty:
+            suggestions.append("对用户追问的进度、时效、责任边界给出明确回应。")
+        return suggestions
+
+    def _build_key_findings(
+        self,
+        matched_rules: List[str],
+        missed_rules: List[str],
+        violated_rules: List[str],
+        repetition_penalty: float,
+    ) -> List[str]:
+        findings = [f"已命中规则：{len(matched_rules)} 条"]
+        if missed_rules:
+            findings.append("遗漏规则：" + "、".join(missed_rules))
+        if violated_rules:
+            findings.append("违规风险：" + "、".join(violated_rules))
+        if repetition_penalty:
+            findings.append("多轮回复存在重复表达，建议增强上下文承接。")
+        if not missed_rules and not violated_rules:
+            findings.append("被测对话模型能够稳定覆盖关键外呼任务流程。")
+        return findings
+
+    def _assistant_text(self, messages: List[Dict[str, Any]]) -> str:
+        return "\n".join(item.get("assistant_message", "") for item in messages)
+
+    def _task_type(self, task_payload: Dict[str, Any], case_payload: Dict[str, Any]) -> str:
+        task_type = task_payload.get("task_type") or ""
+        if task_type:
+            return task_type
+        text = self._joined(
+            task_payload.get("instruction_text", ""),
+            task_payload.get("name", ""),
+            case_payload.get("name", ""),
+            case_payload.get("user_profile", ""),
+            case_payload.get("initial_message", ""),
+            case_payload.get("required_rules", []),
+        )
+        if self._has_any(text, ["飞毛腿", "骑手", "配送", "站长"]):
+            return "rider_outbound"
+        if self._has_any(text, ["课程", "直播", "低延迟", "机构", "商家", "负责人"]):
+            return "course_platform_outbound"
+        return "generic_outbound"
+
+    def _joined(self, *values: Any) -> str:
+        parts: List[str] = []
+        for value in values:
+            if isinstance(value, list):
+                parts.extend(str(item) for item in value)
+            elif isinstance(value, dict):
+                parts.append(str(value))
+            elif value is not None:
+                parts.append(str(value))
+        return " ".join(parts)
+
+    def _dedupe(self, values: List[str]) -> List[str]:
+        return list(dict.fromkeys([item for item in values if item]))
+
+    def _evidence_row(self, message: Dict[str, Any], evidence_text: str) -> Dict[str, Any]:
+        return {
+            "turn_index": message.get("turn_index", 1),
+            "evidence_text": evidence_text,
+            "user_message": message.get("user_message", ""),
+        }
+
+    def _has_any(self, text: str, keywords: List[str]) -> bool:
+        return any(keyword and keyword in text for keyword in self._variants(*keywords))
+
+    def _variants(self, *terms: str) -> List[str]:
+        variants: List[str] = []
+        for term in terms:
+            if not term:
+                continue
+            variants.append(term)
+            try:
+                variants.append(term.encode("utf-8").decode("gbk", errors="ignore"))
+            except Exception:
+                continue
+        return list(dict.fromkeys(variants))
+
+    def _repetition_penalty(self, messages: List[Dict[str, Any]]) -> float:
+        replies = [item.get("assistant_message", "") for item in messages if item.get("assistant_message")]
+        penalty = 0.0
+        for previous, current in zip(replies, replies[1:]):
+            if previous == current:
+                penalty += 14
+            elif SequenceMatcher(None, previous, current).ratio() > 0.88:
+                penalty += 6
+        return penalty
+
+    def _repetition_evidence(self, messages: List[Dict[str, Any]]) -> Dict[str, Any] | None:
+        previous = None
+        for item in messages:
+            current = item.get("assistant_message", "")
+            if previous and current:
+                previous_text, previous_item = previous
+                if current == previous_text or SequenceMatcher(None, current, previous_text).ratio() > 0.88:
+                    return self._evidence_row(item, current)
+            previous = (current, item)
+        return None
+
+    def _unanswered_penalty(self, messages: List[Dict[str, Any]]) -> float:
+        penalty = 0.0
+        for item in messages:
+            user_message = item.get("user_message", "")
+            assistant_message = item.get("assistant_message", "")
+            if self._has_any(user_message, ["多久", "时效", "进度", "结果"]) and not self._has_any(
+                assistant_message,
+                ["工作日", "时效", "反馈", "进度", "处理结果"],
+            ):
+                penalty += 5
+            if self._has_any(user_message, ["能不能", "取消", "补偿", "换", "改"]) and not self._has_any(
+                assistant_message,
+                ["方案", "规则", "确认", "核实", "可变更", "提交"],
+            ):
+                penalty += 4
+        return min(penalty, 14)
+
+    def _risk_phrase_penalty(self, messages: List[Dict[str, Any]]) -> float:
+        text = self._assistant_text(messages)
+        risk_terms = [
+            "保证退款成功",
+            "一定退款",
+            "无需核实",
+            "保证免费",
+            "私下处理",
+            "过期也能用",
+            "一定获得资格",
+            "保证报上",
+            "强制配送",
+            "送优惠券",
+            "保证优惠",
+        ]
+        return 12 if self._has_any(text, risk_terms) else 0
+
+    def _brevity_penalty(self, messages: List[Dict[str, Any]], task_type: str = "generic_outbound") -> float:
+        replies = [item.get("assistant_message", "") for item in messages if item.get("assistant_message")]
+        if not replies:
+            return 12
+        avg_len = sum(len(reply) for reply in replies) / len(replies)
+        if task_type == "course_platform_outbound":
+            if avg_len > 80:
+                return 18
+            if avg_len > 45:
+                return 10
+            return 0
+        if task_type == "rider_outbound":
+            if avg_len > 100:
+                return 16
+            if avg_len > 60:
+                return 8
+            return 0
+        if avg_len > 140:
+            return 10
+        return 0
+
+    def _weighted_score(self, metrics: Dict[str, float]) -> float:
+        return round(sum(float(metrics.get(key, 0)) * weight for key, weight in SCORE_WEIGHTS.items()), 2)
+
+    def _clamp(self, value: float, minimum: float = 0, maximum: float = 100) -> float:
+        return round(max(minimum, min(maximum, value)), 2)
