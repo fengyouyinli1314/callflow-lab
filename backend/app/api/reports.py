@@ -68,7 +68,7 @@ def _serialize_report(report: EvaluationReport) -> Dict[str, Any]:
         "active_rules_explanation": report.active_rules_explanation
         or explainability.get(
             "active_rules_explanation",
-            "本轮仅对当前流程阶段和用户已触发的问题进行评分，后续流程规则暂不扣分。未进入的后续流程不参与当前轮扣分。",
+            "本轮仅对当前流程阶段和用户已触发的问题进行评分，未进入的后续流程不参与当前轮扣分。",
         ),
         "llm_judge_result": report.llm_judge_result or explainability.get("llm_judge_result", {}),
         "suggestions": report.suggestions or explainability.get("improvement_suggestions", []),
@@ -100,7 +100,7 @@ def _metric_explanations_from_details(metric_details: Dict[str, Any]) -> List[Di
                 "metric_key": key,
                 "metric_name": label,
                 "score": detail.get("score", 0),
-                "deduction_reason": detail.get("deduction_reason", "暂无扣分原因"),
+                "deduction_reason": detail.get("deduction_reason", "暂无明显扣分原因"),
                 "evidence_turns": detail.get("evidence_turns", []),
                 "evidence_text": detail.get("evidence_text")
                 or " / ".join(detail.get("evidence_snippets", [])),
