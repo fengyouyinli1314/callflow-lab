@@ -21,6 +21,21 @@
               <el-option v-for="item in cases" :key="item.id" :label="item.name" :value="item.id" />
             </el-select>
           </el-form-item>
+          <el-form-item label="被测模型 provider">
+            <el-select v-model="modelProvider" style="width: 100%">
+              <el-option
+                v-for="provider in providerOptions"
+                :key="provider.value"
+                :label="provider.label"
+                :value="provider.value"
+              />
+            </el-select>
+          </el-form-item>
+          <div class="debug-meta">
+            <span>task_type: {{ selectedTask?.task_type || 'unknown' }}</span>
+            <span>model_provider: {{ displayProvider(result?.model_provider || modelProvider) }}</span>
+            <span>model_name: {{ displayProvider(result?.model_name || modelName) }}</span>
+          </div>
           <el-button
             type="primary"
             :loading="running"
@@ -102,7 +117,15 @@
               <el-tag v-for="rule in visibleRules(failedRules, 5)" :key="rule" type="danger">{{ rule }}</el-tag>
               <el-tag v-if="failedRules.length > 5" type="info">+{{ failedRules.length - 5 }}</el-tag>
             </div>
-            <p v-else class="muted">本次评测未触发失败规则</p>
+            <p v-else class="muted">暂无失败规则</p>
+          </div>
+          <div class="pending-summary">
+            <label>待完成规则</label>
+            <div v-if="pendingRules.length" class="tag-list">
+              <el-tag v-for="rule in visibleRules(pendingRules, 5)" :key="rule" type="info">{{ rule }}</el-tag>
+              <el-tag v-if="pendingRules.length > 5" type="info">+{{ pendingRules.length - 5 }}</el-tag>
+            </div>
+            <p v-else class="muted">暂无待完成规则</p>
           </div>
           <el-button
             type="success"
@@ -135,12 +158,35 @@ const running = ref(false)
 const result = ref(null)
 const messages = ref([])
 const report = ref(null)
+const modelProvider = ref('mock_fallback')
+const providerOptions = [
+  { label: 'mock_fallback（本地兜底，非真实 AI）', value: 'mock_fallback' },
+  { label: 'openai_compatible（真实大模型 API）', value: 'openai_compatible' },
+  { label: 'custom_endpoint（自定义被测模型接口）', value: 'custom_endpoint' }
+]
 
+const selectedTask = computed(() => tasks.value.find((item) => item.id === taskId.value))
 const selectedCase = computed(() => cases.value.find((item) => item.id === caseId.value))
+const legacyProviderMap = {
+  mock_baseline: 'mock_fallback',
+  mock_strong: 'mock_fallback'
+}
+const normalizeProvider = (provider) => legacyProviderMap[provider] || provider || 'mock_fallback'
+const displayProvider = (provider) => normalizeProvider(provider)
+const modelName = computed(() => normalizeProvider(modelProvider.value))
 const matchedRules = computed(() =>
-  Array.from(new Set(messages.value.flatMap((item) => item.matched_rules || item.matchedRules || [])))
+  Array.from(
+    new Set([
+      ...(report.value?.matched_rules || report.value?.matchedRules || []),
+      ...messages.value.flatMap((item) => item.matched_rules || item.matchedRules || [])
+    ])
+  )
 )
 const failedRules = computed(() => report.value?.failed_rules || report.value?.failedRules || [])
+const pendingRules = computed(() => {
+  const active = report.value?.active_rules || report.value?.activeRules || {}
+  return report.value?.pending_rules || report.value?.pendingRules || active.pending_rules || active.pendingRules || []
+})
 const isExcelOutboundTask = (task) =>
   task.data_source === 'excel_desensitized' ||
   ['rider_outbound', 'course_platform_outbound'].includes(task.task_type) ||
@@ -149,6 +195,16 @@ const isExcelOutboundTask = (task) =>
 const preferExcelTasks = (items) => {
   const excelTasks = items.filter(isExcelOutboundTask)
   return excelTasks.length ? excelTasks : items
+}
+const caseKey = (item) => `${item.task_id || ''}::${String(item.name || '').trim()}::${String(item.initial_message || '').trim()}`
+const dedupeCases = (items = []) => {
+  const seen = new Set()
+  return items.filter((item) => {
+    const key = caseKey(item)
+    if (seen.has(key)) return false
+    seen.add(key)
+    return true
+  })
 }
 const visibleRules = (rules, max = 5) => (Array.isArray(rules) ? rules.slice(0, max) : [])
 
@@ -159,7 +215,7 @@ const loadTasks = async () => {
 
 const loadCases = async () => {
   if (!taskId.value) return
-  cases.value = await request.get(`/api/cases?task_id=${taskId.value}`)
+  cases.value = dedupeCases(await request.get(`/api/cases?task_id=${taskId.value}`))
   caseId.value = cases.value[0]?.id || null
   messages.value = []
   report.value = null
@@ -175,7 +231,12 @@ const start = async () => {
   messages.value = []
   report.value = null
   try {
-    result.value = await request.post('/api/runs/start', { task_id: taskId.value, case_id: caseId.value })
+    result.value = await request.post('/api/runs/start', {
+      task_id: taskId.value,
+      case_id: caseId.value,
+      model_provider: normalizeProvider(modelProvider.value),
+      model_name: modelName.value
+    })
     messages.value = await request.get(`/api/runs/${result.value.run_id}/messages`)
     report.value = await request.get(`/api/reports/${result.value.report_id}`)
     ElMessage.success('评测完成')
@@ -209,9 +270,19 @@ onMounted(async () => {
   align-items: center;
 }
 
+.debug-meta {
+  display: grid;
+  gap: 3px;
+  margin: -2px 0 12px;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
 .case-summary label,
 .rule-summary label,
-.failure-summary label {
+.failure-summary label,
+.pending-summary label {
   display: block;
   color: var(--muted);
   font-size: 12px;
@@ -250,7 +321,8 @@ onMounted(async () => {
 }
 
 .rule-summary,
-.failure-summary {
+.failure-summary,
+.pending-summary {
   margin-top: 10px;
 }
 

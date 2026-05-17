@@ -3,17 +3,35 @@
     <div class="page-header">
       <div>
         <h1>数据大屏</h1>
-        <p>复杂外呼任务对话评测台，聚合展示评测次数、质量得分、响应延迟和常见失败规则。</p>
+        <p>复杂外呼任务对话模型自动评测平台，聚合展示评测次数、质量得分、响应延迟和常见失败规则。</p>
       </div>
-      <el-button :icon="Refresh" @click="load">刷新</el-button>
+      <div class="toolbar">
+        <el-button type="primary" :icon="Operation" @click="$router.push('/batch-runs')">批量评测入口</el-button>
+        <el-button :icon="Refresh" @click="load">刷新</el-button>
+      </div>
     </div>
 
     <div class="grid metrics">
       <MetricCard label="任务总数" :value="summary.total_tasks" icon="Document" color="#38bdf8" />
       <MetricCard label="用例总数" :value="summary.total_cases" icon="Tickets" color="#2dd4bf" />
       <MetricCard label="评测次数" :value="summary.total_runs" icon="VideoPlay" color="#7ddc9f" />
+      <MetricCard label="批量次数" :value="summary.total_batches" icon="Operation" color="#22d3ee" />
       <MetricCard label="平均得分" :value="summary.avg_score" icon="TrendCharts" color="#f2c94c" />
+      <MetricCard label="平均通过率" :value="summary.avg_pass_rate" suffix="%" icon="CircleCheck" color="#7ddc9f" />
       <MetricCard label="平均响应" :value="summary.avg_latency_ms" suffix="ms" icon="Timer" color="#f87171" />
+    </div>
+
+    <div class="panel ai-capability-panel">
+      <div class="panel-title">
+        <h2>AI 能力模块</h2>
+        <span class="muted">mock_fallback 仅用于兜底演示</span>
+      </div>
+      <div class="ai-capability-grid">
+        <div v-for="item in aiCapabilities" :key="item.title" class="ai-capability-item">
+          <strong>{{ item.title }}</strong>
+          <span>{{ item.description }}</span>
+        </div>
+      </div>
     </div>
 
     <div class="grid two dashboard-charts">
@@ -37,13 +55,38 @@
         <div v-else ref="failureRef" class="chart"></div>
       </div>
     </div>
+
+    <div class="panel recent-batches">
+      <div class="panel-title">
+        <h2>最近批量评测结果</h2>
+        <span class="muted">{{ recentBatches.length }} 次</span>
+      </div>
+      <el-empty v-if="!recentBatches.length" description="暂无批量评测结果" />
+      <el-table v-else :data="recentBatches">
+        <el-table-column prop="batch_id" label="Batch" width="90">
+          <template #default="{ row }">#{{ row.batch_id }}</template>
+        </el-table-column>
+        <el-table-column prop="status" label="状态" width="120">
+          <template #default="{ row }">
+            <el-tag :type="row.status === 'finished' ? 'success' : 'warning'">{{ statusLabel(row.status) }}</el-tag>
+          </template>
+        </el-table-column>
+        <el-table-column prop="total_runs" label="总运行数" width="100" />
+        <el-table-column prop="finished_runs" label="已完成" width="90" />
+        <el-table-column prop="average_score" label="平均分" width="90" />
+        <el-table-column prop="pass_rate" label="通过率" width="90">
+          <template #default="{ row }">{{ row.pass_rate }}%</template>
+        </el-table-column>
+        <el-table-column prop="created_at" label="创建时间" min-width="180" show-overflow-tooltip />
+      </el-table>
+    </div>
   </section>
 </template>
 
 <script setup>
 import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
 import * as echarts from 'echarts'
-import { Refresh } from '@element-plus/icons-vue'
+import { Operation, Refresh } from '@element-plus/icons-vue'
 import request from '../api/request'
 import MetricCard from '../components/MetricCard.vue'
 
@@ -53,8 +96,11 @@ const summary = ref({
   total_runs: 0,
   avg_score: 0,
   avg_latency_ms: 0,
+  avg_pass_rate: 0,
+  total_batches: 0,
   failed_rules_top5: [],
-  recent_score_trend: []
+  recent_score_trend: [],
+  recent_batches: []
 })
 const trendRef = ref(null)
 const failureRef = ref(null)
@@ -63,6 +109,24 @@ let failureChart
 
 const trendData = computed(() => summary.value.recent_score_trend || [])
 const failureData = computed(() => summary.value.failed_rules_top5 || [])
+const recentBatches = computed(() => summary.value.recent_batches || [])
+const aiCapabilities = [
+  { title: '用户模拟器 Agent', description: '根据任务指令、用户画像和历史对话动态生成被外呼对象发言。' },
+  { title: 'LLM-as-a-Judge 自动评估', description: '结合任务规则、对话证据和指标公式给出语义级评分。' },
+  { title: '真实被测模型接入', description: '通过 openai_compatible 或 custom_endpoint 接入外部模型服务。' },
+  { title: 'AI 辅助生成测试用例', description: '围绕复杂任务指令构造多轮测试场景和约束覆盖。' },
+  { title: '可解释评测报告', description: '输出分数、规则命中、失败证据、扣分原因和优化建议。' }
+]
+
+const statusLabel = (status) => {
+  const labels = {
+    running: '运行中',
+    finished: '已完成',
+    finished_with_errors: '部分失败',
+    failed: '失败'
+  }
+  return labels[status] || status || '-'
+}
 
 const drawTrend = () => {
   if (!trendRef.value) return
@@ -167,11 +231,52 @@ onBeforeUnmount(() => {
 </script>
 
 <style scoped>
-.dashboard-charts {
+.ai-capability-panel,
+.dashboard-charts,
+.recent-batches {
   margin-top: 16px;
+}
+
+.ai-capability-grid {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.ai-capability-item {
+  display: grid;
+  gap: 6px;
+  min-height: 90px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: rgba(22, 32, 51, 0.5);
+}
+
+.ai-capability-item strong {
+  color: var(--text);
+  font-size: 14px;
+}
+
+.ai-capability-item span {
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.5;
 }
 
 .empty-chart {
   min-height: 320px;
+}
+
+@media (max-width: 720px) {
+  .ai-capability-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (min-width: 721px) and (max-width: 1280px) {
+  .ai-capability-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
 }
 </style>

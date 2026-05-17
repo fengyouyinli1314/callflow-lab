@@ -14,6 +14,8 @@ class EvaluationRun(SQLModel, table=True):
     case_id: int = Field(index=True, foreign_key="evaluation_cases.id")
     status: str = Field(default="running", max_length=40)
     total_score: float = Field(default=0)
+    model_provider: str = Field(default="mock_fallback", max_length=80)
+    model_name: str = Field(default="mock_fallback", max_length=120)
     created_at: datetime = Field(default_factory=datetime.utcnow)
     finished_at: Optional[datetime] = None
 

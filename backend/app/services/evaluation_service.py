@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import time
+import logging
 from datetime import datetime
 from typing import Any, Dict
 
@@ -10,22 +11,31 @@ from sqlmodel import Session
 from app.models.case import EvaluationCase
 from app.models.run import EvaluationRun, RunMessage
 from app.models.task import EvaluationTask
-from app.services.llm_judge import LLMJudge
+from app.services.agents.evaluator_agent import EvaluatorAgent
 from app.services.report_service import ReportService
 from app.services.rule_judge import RuleJudge
-from app.services.target_bot import TargetBot
+from app.services.target_model_client import TargetModelClient
 from app.services.user_simulator import UserSimulator
+
+
+logger = logging.getLogger(__name__)
 
 
 class EvaluationService:
     def __init__(self, session: Session) -> None:
         self.session = session
         self.user_simulator = UserSimulator()
-        self.target_bot = TargetBot()
+        self.target_model = TargetModelClient()
         self.rule_judge = RuleJudge()
-        self.llm_judge = LLMJudge()
+        self.evaluator_agent = EvaluatorAgent()
 
-    def start_evaluation(self, task_id: int, case_id: int) -> Dict[str, Any]:
+    def start_evaluation(
+        self,
+        task_id: int,
+        case_id: int,
+        model_provider: str | None = None,
+        model_name: str | None = None,
+    ) -> Dict[str, Any]:
         task = self.session.get(EvaluationTask, task_id)
         case = self.session.get(EvaluationCase, case_id)
         if not task:
@@ -33,13 +43,28 @@ class EvaluationService:
         if not case or case.task_id != task_id:
             raise HTTPException(status_code=404, detail="case not found for task")
 
-        run = EvaluationRun(task_id=task_id, case_id=case_id, status="running")
+        self.target_model = TargetModelClient(model_provider, model_name)
+        model_info = self.target_model.model_info()
+        run = EvaluationRun(
+            task_id=task_id,
+            case_id=case_id,
+            status="running",
+            model_provider=model_info["model_provider"],
+            model_name=model_info["model_name"],
+        )
         self.session.add(run)
         self.session.commit()
         self.session.refresh(run)
 
         task_payload = self._task_payload(task)
         case_payload = self._case_payload(case)
+        task_type = self.target_model.infer_task_type(task_payload, case_payload)
+        logger.info(
+            "callflow trace: POST /api/runs/start -> EvaluationService.start_evaluation -> TargetModelClient.generate_reply task_id=%s case_id=%s task_type=%s",
+            task_id,
+            case_id,
+            task_type,
+        )
         history: list[dict[str, Any]] = []
 
         for turn_index in range(1, case.max_turns + 1):
@@ -49,7 +74,8 @@ class EvaluationService:
             )
             user_message = user_turn["content"]
             started = time.perf_counter()
-            assistant_message = self.target_bot.reply(task_payload, case_payload, user_message, history)
+            target_result = self.target_model.generate_reply(task_payload, case_payload, user_message, history)
+            assistant_message = target_result.content
             latency_ms = round((time.perf_counter() - started) * 1000 + 120 + turn_index * 17, 2)
 
             turn_history = history + [
@@ -61,6 +87,10 @@ class EvaluationService:
                 }
             ]
             turn_score = self.rule_judge.score_turn(case_payload, turn_history, latency_ms, task_payload)
+            user_state = dict(user_turn.get("user_state", {}) or {})
+            if target_result.should_close and user_state.get("goal_progress") != "rejected":
+                user_state["goal_progress"] = "accepted"
+                user_state["current_intent"] = "接受并结束"
             message = RunMessage(
                 run_id=run.id,
                 turn_index=turn_index,
@@ -73,9 +103,21 @@ class EvaluationService:
                 violated_rules=turn_score["violated_rules"],
                 detail={
                     "reason": turn_score["reason"],
-                    "user_state": user_turn.get("user_state", {}),
+                    "active_rules": turn_score.get("active_rules", {}),
+                    "pending_rules": turn_score.get("pending_rules", []),
+                    "not_applicable_rules": turn_score.get("not_applicable_rules", []),
+                    "current_stage": turn_score.get("current_stage", ""),
+                    "active_rules_explanation": turn_score.get("active_rules_explanation", ""),
+                    "user_state": user_state,
                     "user_intent": user_turn.get("intent", ""),
                     "should_continue": user_turn.get("should_continue", True),
+                    "model_provider": target_result.provider,
+                    "model_name": target_result.model_name,
+                    "target_fallback_used": target_result.fallback_used,
+                    "task_type": target_result.task_type,
+                    "target_call_chain": target_result.call_chain,
+                    "target_should_close": target_result.should_close,
+                    "dialogue_state": target_result.dialogue_state,
                 },
             )
             self.session.add(message)
@@ -95,9 +137,18 @@ class EvaluationService:
                     "detail": message.detail,
                 }
             )
+            if not user_turn.get("should_continue", True) or target_result.should_close:
+                logger.info(
+                    "evaluation stopped early run_id=%s turn=%s user_should_continue=%s target_should_close=%s",
+                    run.id,
+                    turn_index,
+                    user_turn.get("should_continue", True),
+                    target_result.should_close,
+                )
+                break
 
         rule_result = self.rule_judge.evaluate_conversation(task_payload, case_payload, history)
-        llm_result = self.llm_judge.evaluate(task_payload, case_payload, history, rule_result)
+        llm_result = self.evaluator_agent.evaluate(task_payload, case_payload, history, rule_result)
         report = ReportService(self.session).create_report(
             run_id=run.id,
             task_id=task_id,
@@ -117,6 +168,9 @@ class EvaluationService:
             "run_id": run.id,
             "report_id": report.report_id,
             "total_score": report.total_score,
+            "model_provider": run.model_provider,
+            "model_name": run.model_name,
+            "task_type": task_type,
             "message": "evaluation finished",
         }
 

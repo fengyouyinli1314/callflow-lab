@@ -14,7 +14,12 @@ router = APIRouter(prefix="/api/runs", tags=["runs"])
 
 @router.post("/start", response_model=RunStartResponse)
 def start_run(payload: RunStartRequest, session: Session = Depends(get_session)) -> dict:
-    return EvaluationService(session).start_evaluation(payload.task_id, payload.case_id)
+    return EvaluationService(session).start_evaluation(
+        payload.task_id,
+        payload.case_id,
+        payload.model_provider,
+        payload.model_name,
+    )
 
 
 @router.get("/{run_id}", response_model=RunRead)

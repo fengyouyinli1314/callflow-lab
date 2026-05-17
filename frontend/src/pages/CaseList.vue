@@ -25,6 +25,7 @@
             <div class="rule-tags">
               <el-tag v-for="rule in visibleRules(row.required_rules)" :key="rule" type="success">{{ rule }}</el-tag>
               <el-tag v-if="hiddenRuleCount(row.required_rules)" type="info">+{{ hiddenRuleCount(row.required_rules) }}</el-tag>
+              <span v-if="!hasRules(row.required_rules)" class="muted">暂无规则</span>
             </div>
           </template>
         </el-table-column>
@@ -33,6 +34,7 @@
             <div class="rule-tags">
               <el-tag v-for="rule in visibleRules(row.forbidden_rules)" :key="rule" type="danger">{{ rule }}</el-tag>
               <el-tag v-if="hiddenRuleCount(row.forbidden_rules)" type="info">+{{ hiddenRuleCount(row.forbidden_rules) }}</el-tag>
+              <span v-if="!hasRules(row.forbidden_rules)" class="muted">暂无规则</span>
             </div>
           </template>
         </el-table-column>
@@ -91,6 +93,17 @@ const form = reactive({
 const lines = (text) => text.split('\n').map((item) => item.trim()).filter(Boolean)
 const visibleRules = (rules = []) => (Array.isArray(rules) ? rules.slice(0, 2) : [])
 const hiddenRuleCount = (rules = []) => (Array.isArray(rules) && rules.length > 2 ? rules.length - 2 : 0)
+const hasRules = (rules = []) => Array.isArray(rules) && rules.length > 0
+const caseKey = (item) => `${item.task_id || ''}::${String(item.name || '').trim()}::${String(item.initial_message || '').trim()}`
+const dedupeCases = (items = []) => {
+  const seen = new Set()
+  return items.filter((item) => {
+    const key = caseKey(item)
+    if (seen.has(key)) return false
+    seen.add(key)
+    return true
+  })
+}
 const isExcelOutboundTask = (task) =>
   task.data_source === 'excel_desensitized' ||
   ['rider_outbound', 'course_platform_outbound'].includes(task.task_type) ||
@@ -112,7 +125,7 @@ const loadCases = async () => {
   try {
     const data = await request.get(selectedTask.value ? `/api/cases?task_id=${selectedTask.value}` : '/api/cases')
     const taskIds = new Set(tasks.value.map((task) => task.id))
-    cases.value = selectedTask.value ? data : data.filter((item) => taskIds.has(item.task_id))
+    cases.value = dedupeCases(selectedTask.value ? data : data.filter((item) => taskIds.has(item.task_id)))
   } finally {
     loading.value = false
   }

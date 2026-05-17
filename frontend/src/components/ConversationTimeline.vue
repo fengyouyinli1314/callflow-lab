@@ -11,6 +11,11 @@
         <div class="message-stack">
           <div class="message-name user-name">用户模拟器</div>
           <div class="bubble user-bubble">{{ item.userMessage || '暂无用户发言' }}</div>
+          <div v-if="item.userIntent || item.userStateTags.length || item.shouldContinue === false" class="state-row user-state-row">
+            <el-tag v-if="item.userIntent" type="info">意图：{{ item.userIntent }}</el-tag>
+            <el-tag v-for="tag in item.userStateTags" :key="`state-${item.key}-${tag}`" type="info">{{ tag }}</el-tag>
+            <el-tag v-if="item.shouldContinue === false" type="warning">用户结束对话</el-tag>
+          </div>
         </div>
         <div class="avatar user">U</div>
       </div>
@@ -23,6 +28,7 @@
           <div class="turn-meta">
             <el-tag type="info">响应 {{ item.latencyMs }} ms</el-tag>
             <el-tag :type="scoreType(item.score)">轮次得分 {{ item.score }}</el-tag>
+            <el-tag v-if="item.currentStage" type="info">阶段：{{ item.currentStage }}</el-tag>
             <el-tag
               v-for="rule in item.matchedRules"
               :key="`matched-${item.key}-${rule}`"
@@ -43,6 +49,13 @@
               type="danger"
             >
               违规：{{ rule }}
+            </el-tag>
+            <el-tag
+              v-for="rule in item.pendingRules"
+              :key="`pending-${item.key}-${rule}`"
+              type="info"
+            >
+              待完成：{{ rule }}
             </el-tag>
           </div>
         </div>
@@ -74,9 +87,20 @@ const pickMessage = (item, primaryKey, fallbackRole) => {
   return ''
 }
 
+const buildUserStateTags = (detail = {}) => {
+  const state = detail.user_state || detail.userState || {}
+  const tags = []
+  if (state.emotion_level !== undefined && state.emotion_level !== null) tags.push(`情绪 ${state.emotion_level}`)
+  if (state.patience !== undefined && state.patience !== null) tags.push(`耐心 ${state.patience}`)
+  if (state.goal_progress) tags.push(`进度 ${state.goal_progress}`)
+  if (state.current_intent && state.current_intent !== detail.user_intent) tags.push(`状态 ${state.current_intent}`)
+  return tags
+}
+
 const turns = computed(() =>
   props.messages.map((item, index) => {
     const score = Number(item.rule_score ?? item.turn_score ?? item.score ?? 0)
+    const detail = item.detail || item.metadata || {}
     return {
       key: item.id || `${item.run_id || 'turn'}-${item.turn_index || index + 1}`,
       turnIndex: item.turn_index ?? item.turnIndex ?? index + 1,
@@ -88,7 +112,12 @@ const turns = computed(() =>
       score: Number.isFinite(score) ? Number(score.toFixed(1)) : 0,
       matchedRules: toArray(item.matched_rules ?? item.matchedRules),
       missedRules: toArray(item.missed_rules ?? item.missedRules),
-      violatedRules: toArray(item.violated_rules ?? item.violatedRules)
+      violatedRules: toArray(item.violated_rules ?? item.violatedRules),
+      pendingRules: toArray(detail.pending_rules ?? detail.pendingRules),
+      currentStage: detail.current_stage || detail.currentStage || '',
+      userIntent: detail.user_intent || detail.userIntent || '',
+      userStateTags: buildUserStateTags(detail),
+      shouldContinue: detail.should_continue ?? detail.shouldContinue
     }
   })
 )
@@ -203,6 +232,16 @@ const scoreType = (score) => {
   gap: 8px;
   flex-wrap: wrap;
   margin-top: 2px;
+}
+
+.state-row {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.user-state-row {
+  justify-content: flex-end;
 }
 
 @media (max-width: 720px) {

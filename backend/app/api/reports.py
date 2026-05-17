@@ -60,7 +60,17 @@ def _serialize_report(report: EvaluationReport) -> Dict[str, Any]:
         "avg_latency_ms": report.avg_latency_ms,
         "failed_rule_count": report.failed_rule_count or len(report.failed_rules or []),
         "total_turns": report.total_turns,
+        "matched_rules": report.matched_rules or [],
         "failed_rules": report.failed_rules or [],
+        "active_rules": report.active_rules or explainability.get("active_rules", {}),
+        "pending_rules": report.pending_rules or explainability.get("pending_rules", []),
+        "current_stage": report.current_stage or explainability.get("current_stage", ""),
+        "active_rules_explanation": report.active_rules_explanation
+        or explainability.get(
+            "active_rules_explanation",
+            "本轮仅对当前流程阶段和用户已触发的问题进行评分，后续流程规则暂不扣分。未进入的后续流程不参与当前轮扣分。",
+        ),
+        "llm_judge_result": report.llm_judge_result or explainability.get("llm_judge_result", {}),
         "suggestions": report.suggestions or explainability.get("improvement_suggestions", []),
         "metric_details": metric_details,
         "metric_explanations": metric_explanations,

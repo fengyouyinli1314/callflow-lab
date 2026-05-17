@@ -20,6 +20,10 @@
           <strong>{{ taskTypeLabel(task) }}</strong>
         </div>
         <div class="meta-row">
+          <span>数据来源</span>
+          <strong>{{ sourceLabel(task.data_source) }}</strong>
+        </div>
+        <div class="meta-row">
           <span>评测目标</span>
           <p>{{ task.evaluation_goal || task.task_text || '-' }}</p>
         </div>
@@ -44,8 +48,19 @@
         <el-table :data="cases" max-height="620">
           <el-table-column prop="name" label="用例名称" min-width="160" show-overflow-tooltip />
           <el-table-column prop="user_profile" label="用户画像" min-width="220" show-overflow-tooltip />
+          <el-table-column prop="initial_message" label="初始问题" min-width="220" show-overflow-tooltip />
           <el-table-column prop="difficulty" label="难度" width="90" />
           <el-table-column prop="max_turns" label="轮数" width="80" />
+          <el-table-column label="规则摘要" min-width="220">
+            <template #default="{ row }">
+              <div class="case-rules">
+                <el-tag v-for="rule in visibleRules(row.required_rules)" :key="`required-${row.id}-${rule}`" type="success">{{ rule }}</el-tag>
+                <el-tag v-if="hiddenRuleCount(row.required_rules)" type="info">+{{ hiddenRuleCount(row.required_rules) }}</el-tag>
+                <el-tag v-for="rule in visibleRules(row.forbidden_rules)" :key="`forbidden-${row.id}-${rule}`" type="danger">{{ rule }}</el-tag>
+                <span v-if="!hasRules(row)" class="muted">暂无规则</span>
+              </div>
+            </template>
+          </el-table-column>
         </el-table>
       </div>
     </div>
@@ -92,6 +107,9 @@ const sourceLabel = (source) => {
   if (source === 'excel_desensitized') return '脱敏 Excel'
   return source || '本地演示'
 }
+const visibleRules = (rules = []) => (Array.isArray(rules) ? rules.slice(0, 1) : [])
+const hiddenRuleCount = (rules = []) => (Array.isArray(rules) && rules.length > 1 ? rules.length - 1 : 0)
+const hasRules = (row) => Boolean((row.required_rules || []).length || (row.forbidden_rules || []).length)
 
 onMounted(async () => {
   task.value = await request.get(`/api/tasks/${route.params.id}`)
@@ -139,5 +157,19 @@ onMounted(async () => {
   line-height: 1.7;
   color: var(--body-text);
   padding-right: 6px;
+}
+
+.case-rules {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  max-height: 58px;
+  overflow: hidden;
+}
+
+.case-rules :deep(.el-tag) {
+  max-width: 150px;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 </style>

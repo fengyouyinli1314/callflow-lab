@@ -3,7 +3,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.api import cases, dashboard, reports, runs, tasks
+from app.api import batch_runs, cases, dashboard, dev, model_providers, reports, runs, tasks
 from app.core.config import settings
 from app.core.database import create_db_and_tables
 from app.seed.sample_data import seed_sample_data
@@ -35,5 +35,8 @@ def health_check() -> dict:
 app.include_router(tasks.router)
 app.include_router(cases.router)
 app.include_router(runs.router)
+app.include_router(batch_runs.router)
+app.include_router(model_providers.router)
 app.include_router(reports.router)
 app.include_router(dashboard.router)
+app.include_router(dev.router)

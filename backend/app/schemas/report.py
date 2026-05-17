@@ -20,7 +20,13 @@ class ReportRead(SQLModel):
     avg_latency_ms: float
     failed_rule_count: int
     total_turns: int
+    matched_rules: List[str]
     failed_rules: List[str]
+    active_rules: Dict[str, Any]
+    pending_rules: List[str]
+    current_stage: str
+    active_rules_explanation: str
+    llm_judge_result: Dict[str, Any]
     suggestions: List[str]
     metric_details: Dict[str, Any]
     metric_explanations: List[Dict[str, Any]]

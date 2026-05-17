@@ -9,8 +9,8 @@ from xml.etree import ElementTree as ET
 
 from sqlmodel import Session, select
 
-from app.models.case import EvaluationCase
 from app.models.task import EvaluationTask
+from app.services.case_registry import get_or_create_case
 
 
 DATA_SOURCE = "excel_desensitized"
@@ -29,7 +29,7 @@ def seed_instructions_from_excel(
     imported = 0
     for record in records:
         payload = _task_payload(record)
-        task = session.exec(select(EvaluationTask).where(EvaluationTask.name == payload["name"])).first()
+        task = _existing_task(session, payload["name"], payload["task_type"])
         if task:
             for key, value in payload.items():
                 setattr(task, key, value)
@@ -122,17 +122,17 @@ def parse_instruction_sections(instruction_text: str) -> Dict[str, str]:
 
 
 def classify_task_type(instruction_text: str) -> str:
-    if any(keyword in instruction_text for keyword in ["飞毛腿", "骑手", "配送"]):
+    if any(keyword in instruction_text for keyword in ["飞毛腿", "骑手", "配送", "派单"]):
         return "rider_outbound"
-    if any(keyword in instruction_text for keyword in ["课程", "直播", "低延迟直播", "机构"]):
+    if any(keyword in instruction_text for keyword in ["课程", "直播", "低延迟", "机构", "负责人"]):
         return "course_platform_outbound"
     return "generic_outbound"
 
 
 def generate_task_name(instruction_text: str) -> str:
-    if any(keyword in instruction_text for keyword in ["飞毛腿", "骑手", "配送"]):
+    if any(keyword in instruction_text for keyword in ["飞毛腿", "骑手", "配送", "派单"]):
         return "飞毛腿骑手合同生效外呼评测"
-    if any(keyword in instruction_text for keyword in ["课程", "直播", "低延迟直播", "机构"]):
+    if any(keyword in instruction_text for keyword in ["课程", "直播", "低延迟", "机构", "负责人"]):
         return "课程直播产品升级外呼评测"
     return "复杂外呼任务指令评测"
 
@@ -162,18 +162,19 @@ def _task_payload(record: Dict[str, Any]) -> Dict[str, Any]:
 
 def _ensure_task_cases(session: Session, task: EvaluationTask, record: Dict[str, Any]) -> None:
     for payload in _case_payloads(record):
-        existing_case = session.exec(
-            select(EvaluationCase).where(
-                EvaluationCase.task_id == task.id,
-                EvaluationCase.name == payload["name"],
-            )
-        ).first()
-        if existing_case:
-            for key, value in payload.items():
-                setattr(existing_case, key, value)
-            session.add(existing_case)
-            continue
-        session.add(EvaluationCase(task_id=task.id, **payload))
+        get_or_create_case(session, {"task_id": task.id, **payload})
+
+
+def _existing_task(session: Session, name: str, task_type: str) -> EvaluationTask | None:
+    task = session.exec(
+        select(EvaluationTask).where(
+            EvaluationTask.name == name,
+            EvaluationTask.task_type == task_type,
+        )
+    ).first()
+    if task:
+        return task
+    return session.exec(select(EvaluationTask).where(EvaluationTask.name == name)).first()
 
 
 def _case_payloads(record: Dict[str, Any]) -> List[Dict[str, Any]]:

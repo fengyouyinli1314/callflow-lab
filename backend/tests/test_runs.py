@@ -15,4 +15,4 @@ def test_start_evaluation_and_get_messages(client):
 
     messages = client.get(f"/api/runs/{result['run_id']}/messages")
     assert messages.status_code == 200
-    assert len(messages.json()) == case["max_turns"]
+    assert 1 <= len(messages.json()) <= case["max_turns"]

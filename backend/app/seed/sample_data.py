@@ -4,160 +4,137 @@ from app.core.database import engine
 from app.models.case import EvaluationCase
 from app.models.task import EvaluationTask
 from app.seed.import_instruction_excel import seed_instructions_from_excel
+from app.services.case_registry import get_or_create_case
 
 
 TASK_SPECS = [
     {
-        "name": "外卖退款客服流程评测",
-        "description": "用户投诉外卖超时并要求退款，评测客服是否先核实订单、安抚情绪并说明处理时效。",
-        "target_scenario": "外卖退款",
-        "system_instruction": "客服必须核实订单号，不能直接承诺退款成功，需要告知处理时效，并安抚用户情绪。",
-        "evaluation_goal": "评测被测模型在退款投诉场景中的流程完整性、合规承诺和情绪处理能力。",
+        "name": "飞毛腿骑手合同生效外呼评测",
+        "description": "评测模型是否能围绕骑手合同生效、完成要求、派单影响和安全提醒完成外呼。",
+        "target_scenario": "飞毛腿骑手外呼",
+        "system_instruction": "站长需告知飞毛腿合同已生效，确认是否开始配送，并说明完成要求、影响和安全规则。",
+        "evaluation_goal": "评测被测模型在飞毛腿骑手合同生效外呼中的任务遵循、安抚和边界控制能力。",
+        "instruction_text": "飞毛腿骑手合同已生效，需确认骑手是否开始配送，并说明单日 X 单、多日每天 Y 单、未完成影响和安全要求。",
+        "task_type": "rider_outbound",
+        "data_source": "mock_sample",
     },
     {
-        "name": "酒店预订变更流程评测",
-        "description": "用户希望修改入住日期，评测客服是否确认订单、日期、房型和差价。",
-        "target_scenario": "酒店订单变更",
-        "system_instruction": "客服需要确认订单信息、入住日期、房型是否可变更，并提醒可能产生差价。",
-        "evaluation_goal": "评测被测模型在酒店订单变更中的信息核实、限制说明和风险提示能力。",
+        "name": "课程直播产品升级外呼评测",
+        "description": "评测模型是否能围绕课程直播发布页升级、负责人转达、发布方式和费用差异完成外呼。",
+        "target_scenario": "课程直播产品升级外呼",
+        "system_instruction": "外呼需确认是否负责人，说明标准直播和低延迟直播，并根据发布方式给出简短引导。",
+        "evaluation_goal": "评测被测模型在课程直播产品升级外呼中的信息传达、分支处理和边界控制能力。",
+        "instruction_text": "课程直播发布页升级，需确认负责人，说明标准直播、低延迟直播、Web 控制台、第三方系统和费用差异。",
+        "task_type": "course_platform_outbound",
+        "data_source": "mock_sample",
     },
     {
-        "name": "到店团购券核销流程评测",
-        "description": "用户到店后团购券无法核销，评测客服是否排查券状态、门店范围和有效期。",
-        "target_scenario": "团购券核销",
-        "system_instruction": "客服需要排查券状态、门店适用范围、有效期，并给出下一步处理建议。",
-        "evaluation_goal": "评测被测模型在核销异常场景中的排查路径、规则解释和处理建议能力。",
+        "name": "通用复杂外呼任务评测",
+        "description": "用于没有专属任务类型时的通用复杂外呼评测 fallback。",
+        "target_scenario": "通用复杂外呼",
+        "system_instruction": "外呼时应说明目的、按流程推进、遵守任务约束，并避免串用其他业务场景。",
+        "evaluation_goal": "评测被测模型在通用复杂外呼任务中的流程推进和约束遵守能力。",
+        "instruction_text": "根据当前任务指令完成通用复杂外呼，保持简短、清晰、可执行。",
+        "task_type": "generic_outbound",
+        "data_source": "mock_sample",
     },
 ]
 
 
 CASE_SPECS = {
-    "外卖退款客服流程评测": [
+    "飞毛腿骑手合同生效外呼评测": [
         {
-            "name": "普通用户退款诉求",
-            "user_profile": "普通用户，表达清楚，希望尽快退款。",
-            "initial_message": "我的外卖迟到了快一个小时，饭都凉了，我想申请退款。",
+            "name": "询问合同影响",
+            "user_profile": "反复追问骑手。",
+            "initial_message": "如果我今天没完成 X 单会怎么样？",
             "max_turns": 4,
-            "expected_goals": ["完成退款受理前置核实", "说明处理时效", "安抚用户情绪"],
-            "required_rules": ["必须核实订单号", "必须告知处理时效", "必须安抚用户情绪"],
-            "forbidden_rules": ["禁止直接承诺退款成功", "禁止跳过核实"],
-            "difficulty": "简单",
-        },
-        {
-            "name": "情绪激动用户投诉",
-            "user_profile": "情绪激动用户，对配送超时非常不满，要求马上给说法。",
-            "initial_message": "你们配送太离谱了，我等了这么久，必须马上给我处理退款！",
-            "max_turns": 5,
-            "expected_goals": ["识别情绪", "核实订单", "按规则说明退款路径"],
-            "required_rules": ["必须核实订单号", "必须告知处理时效", "必须安抚用户情绪"],
-            "forbidden_rules": ["禁止直接承诺退款成功", "禁止跳过核实"],
-            "difficulty": "困难",
-        },
-        {
-            "name": "信息缺失退款咨询",
-            "user_profile": "信息缺失用户，暂时找不到订单号，需要客服引导。",
-            "initial_message": "我想退一个超时外卖，但我现在找不到订单号怎么办？",
-            "max_turns": 4,
-            "expected_goals": ["引导查找订单信息", "不越权承诺", "说明处理时效"],
-            "required_rules": ["必须核实订单号", "必须告知处理时效", "必须安抚用户情绪"],
-            "forbidden_rules": ["禁止直接承诺退款成功", "禁止跳过核实"],
+            "expected_goals": ["回答合同完成要求", "说明可能影响合同和派单", "不夸大处罚"],
+            "required_rules": ["必须说明单日/多日完成要求", "必须说明未完成影响"],
+            "forbidden_rules": ["禁止串用旧客服流程"],
             "difficulty": "中等",
         },
         {
-            "name": "失败演示：外卖退款越权承诺",
-            "user_profile": "失败演示用户，情绪激动，要求客服马上退款。",
-            "initial_message": "我外卖超时很久了，不想再等，你直接给我退款。",
-            "max_turns": 4,
-            "expected_goals": ["暴露未核实订单即承诺退款", "暴露未说明处理时效", "暴露缺少情绪安抚"],
-            "required_rules": ["必须核实订单号", "必须告知处理时效", "必须安抚用户情绪"],
-            "forbidden_rules": ["禁止直接承诺退款成功", "禁止跳过核实"],
-            "difficulty": "困难",
-        },
-    ],
-    "酒店预订变更流程评测": [
-        {
-            "name": "普通用户修改入住日期",
-            "user_profile": "普通用户，计划变更，希望了解是否能修改入住日期。",
-            "initial_message": "我预订的酒店想把入住日期往后改一天，可以帮我改吗？",
-            "max_turns": 4,
-            "expected_goals": ["确认订单信息", "确认新入住日期", "提醒差价"],
-            "required_rules": ["必须确认订单信息", "必须确认入住日期", "必须确认房型", "必须提醒可能产生差价"],
-            "forbidden_rules": ["禁止承诺免费变更", "禁止跳过核实"],
-            "difficulty": "简单",
-        },
-        {
-            "name": "需求变更用户改房型",
-            "user_profile": "需求变更用户，先改日期又想顺便升级房型。",
-            "initial_message": "我酒店订单要改入住日期，可能还想把大床房换成双床房。",
+            "name": "抱怨恶劣天气",
+            "user_profile": "情绪不满骑手。",
+            "initial_message": "今天下雨这么大，怎么还让我跑？",
             "max_turns": 5,
-            "expected_goals": ["确认订单", "确认日期与房型", "说明库存和差价"],
-            "required_rules": ["必须确认订单信息", "必须确认入住日期", "必须确认房型", "必须提醒可能产生差价"],
-            "forbidden_rules": ["禁止承诺免费变更", "禁止跳过核实"],
+            "expected_goals": ["先安抚", "提醒安全", "说明雨天完成有助于保住资格", "不强迫骑手冒险"],
+            "required_rules": ["必须安抚拒绝或情绪不满骑手", "必须提醒安全"],
+            "forbidden_rules": ["禁止强迫恶劣天气配送", "禁止串用旧客服流程"],
             "difficulty": "困难",
         },
         {
-            "name": "反复追问变更限制",
-            "user_profile": "反复追问用户，持续询问是否一定可以变更。",
-            "initial_message": "我这个酒店订单是不是肯定能改日期？你帮我确认一下。",
+            "name": "询问如何退出飞毛腿",
+            "user_profile": "信息咨询骑手。",
+            "initial_message": "我想退出飞毛腿，怎么取消？",
             "max_turns": 4,
-            "expected_goals": ["明确变更条件", "提醒酒店政策", "给出下一步"],
-            "required_rules": ["必须确认订单信息", "必须确认入住日期", "必须确认房型", "必须提醒可能产生差价"],
-            "forbidden_rules": ["禁止承诺免费变更", "禁止跳过核实"],
+            "expected_goals": ["告知需要在前一天指定时间前在 App 报名页取消"],
+            "required_rules": ["必须正确说明退出流程"],
+            "forbidden_rules": ["禁止串用旧客服流程"],
             "difficulty": "中等",
         },
         {
-            "name": "失败演示：酒店变更跳过核实",
-            "user_profile": "失败演示用户，信息不完整，要求客服直接改期。",
-            "initial_message": "我酒店日期要改，你别问那么多，直接帮我改到下周。",
+            "name": "质疑报名排名",
+            "user_profile": "质疑规则骑手。",
+            "initial_message": "为什么别人能报上，我不行？",
             "max_turns": 4,
-            "expected_goals": ["暴露未确认订单号", "暴露未确认新入住日期", "暴露未核实房型", "暴露未提醒差价"],
-            "required_rules": ["必须确认订单信息", "必须确认入住日期", "必须确认房型", "必须提醒可能产生差价"],
-            "forbidden_rules": ["禁止承诺免费变更", "禁止跳过核实"],
-            "difficulty": "困难",
+            "expected_goals": ["说明报名按排名进行", "说明不是站长干预"],
+            "required_rules": ["必须说明报名排名非站长干预"],
+            "forbidden_rules": ["禁止串用旧客服流程"],
+            "difficulty": "中等",
         },
     ],
-    "到店团购券核销流程评测": [
+    "课程直播产品升级外呼评测": [
         {
-            "name": "普通用户券无法核销",
-            "user_profile": "普通用户，到店后发现团购券扫不出来。",
-            "initial_message": "我到店消费，团购券一直核销失败，店员也不知道怎么办。",
+            "name": "非负责人转达",
+            "user_profile": "非负责人。",
+            "initial_message": "我不是负责人，我只是前台。",
             "max_turns": 4,
-            "expected_goals": ["排查券状态", "核对门店适用范围", "核对有效期", "给出处理建议"],
-            "required_rules": ["必须排查券状态", "必须核对门店适用范围", "必须核对有效期", "必须给出下一步处理建议"],
-            "forbidden_rules": ["禁止绕过平台私下处理", "禁止忽视有效期"],
-            "difficulty": "简单",
-        },
-        {
-            "name": "情绪激动到店核销失败",
-            "user_profile": "情绪激动用户，已经到店等待，要求立即解决。",
-            "initial_message": "我人就在店里，券核销不了，太耽误时间了，你们马上解决！",
-            "max_turns": 5,
-            "expected_goals": ["安抚现场情绪", "排查券码与门店", "给出异常工单方案"],
-            "required_rules": ["必须排查券状态", "必须核对门店适用范围", "必须核对有效期", "必须给出下一步处理建议"],
-            "forbidden_rules": ["禁止绕过平台私下处理", "禁止忽视有效期"],
-            "difficulty": "困难",
-        },
-        {
-            "name": "信息缺失核销咨询",
-            "user_profile": "信息缺失用户，只知道券不能用，但没有截图和券码。",
-            "initial_message": "我的团购券用不了，但我不知道要给你什么信息。",
-            "max_turns": 4,
-            "expected_goals": ["引导提供券码", "说明排查维度", "输出下一步动作"],
-            "required_rules": ["必须排查券状态", "必须核对门店适用范围", "必须核对有效期", "必须给出下一步处理建议"],
-            "forbidden_rules": ["禁止绕过平台私下处理", "禁止忽视有效期"],
+            "expected_goals": ["请对方转达", "简短说明升级内容"],
+            "required_rules": ["必须请对方转达", "必须简短说明升级内容"],
+            "forbidden_rules": ["禁止强行继续推销"],
             "difficulty": "中等",
         },
         {
-            "name": "失败演示：团购券核销跳过排查",
-            "user_profile": "失败演示用户，到店等待，要求客服不要排查直接给解决。",
-            "initial_message": "团购券核销不了，你别让我再查券码门店了，直接给我处理。",
-            "max_turns": 4,
-            "expected_goals": ["暴露未排查券状态", "暴露未核对有效期", "暴露未核对适用门店", "暴露缺少下一步动作"],
-            "required_rules": ["必须排查券状态", "必须核对门店适用范围", "必须核对有效期", "必须给出下一步处理建议"],
-            "forbidden_rules": ["禁止绕过平台私下处理", "禁止忽视有效期"],
+            "name": "负责人正常沟通",
+            "user_profile": "机构负责人，愿意了解。",
+            "initial_message": "我是负责人，你说吧。",
+            "max_turns": 5,
+            "expected_goals": ["说明标准直播和低延迟直播", "说明低延迟适合实时互动", "询问当前发布方式"],
+            "required_rules": ["必须说明新增标准直播和低延迟直播", "必须说明低延迟适合实时互动", "必须询问当前发布方式"],
+            "forbidden_rules": ["禁止承诺优惠券", "禁止使用不专业语气"],
+            "difficulty": "简单",
+        },
+        {
+            "name": "第三方系统看不到选项",
+            "user_profile": "技术不熟悉商家。",
+            "initial_message": "我第三方系统里看不到低延迟直播选项。",
+            "max_turns": 5,
+            "expected_goals": ["按流程引导进入对应路径", "说明发布方式配置"],
+            "required_rules": ["必须按流程引导进入对应路径"],
+            "forbidden_rules": ["禁止长篇大论"],
             "difficulty": "困难",
         },
     ],
+    "通用复杂外呼任务评测": [
+        {
+            "name": "通用外呼确认",
+            "user_profile": "普通外呼对象，愿意配合但会追问关键信息。",
+            "initial_message": "您好，可以简单说一下。",
+            "max_turns": 4,
+            "expected_goals": ["完成开场", "推进流程", "遵守约束"],
+            "required_rules": ["必须说明外呼目的", "必须按流程推进", "必须遵守外呼约束"],
+            "forbidden_rules": ["禁止超出知识库答复"],
+            "difficulty": "中等",
+        }
+    ],
+}
+
+
+LEGACY_TASK_NAMES = {
+    "\u5916\u5356\u9000\u6b3e\u5ba2\u670d\u6d41\u7a0b\u8bc4\u6d4b",
+    "\u9152\u5e97\u9884\u8ba2\u53d8\u66f4\u6d41\u7a0b\u8bc4\u6d4b",
+    "\u5230\u5e97\u56e2\u8d2d\u5238\u6838\u9500\u6d41\u7a0b\u8bc4\u6d4b",
 }
 
 
@@ -169,9 +146,13 @@ def seed_sample_data() -> None:
 
         task_by_name: dict[str, EvaluationTask] = {}
         for spec in TASK_SPECS:
-            task = session.exec(select(EvaluationTask).where(EvaluationTask.name == spec["name"])).first()
+            task = _existing_task(session, spec["name"], spec["task_type"])
             if not task:
                 task = EvaluationTask(**spec)
+                session.add(task)
+            else:
+                for key, value in spec.items():
+                    setattr(task, key, value)
                 session.add(task)
             task_by_name[spec["name"]] = task
 
@@ -182,23 +163,27 @@ def seed_sample_data() -> None:
         for task_name, case_specs in CASE_SPECS.items():
             task = task_by_name[task_name]
             for case_spec in case_specs:
-                existing_case = session.exec(
-                    select(EvaluationCase).where(
-                        EvaluationCase.task_id == task.id,
-                        EvaluationCase.name == case_spec["name"],
-                    )
-                ).first()
-                if existing_case:
-                    continue
-                session.add(EvaluationCase(task_id=task.id, **case_spec))
+                get_or_create_case(session, {"task_id": task.id, **case_spec})
 
+        _remove_legacy_mock_tasks(session)
         session.commit()
 
 
+def _existing_task(session: Session, name: str, task_type: str) -> EvaluationTask | None:
+    task = session.exec(
+        select(EvaluationTask).where(
+            EvaluationTask.name == name,
+            EvaluationTask.task_type == task_type,
+        )
+    ).first()
+    if task:
+        return task
+    return session.exec(select(EvaluationTask).where(EvaluationTask.name == name)).first()
+
+
 def _remove_legacy_mock_tasks(session: Session) -> None:
-    legacy_names = {item["name"] for item in TASK_SPECS}
     legacy_tasks = list(
-        session.exec(select(EvaluationTask).where(EvaluationTask.name.in_(legacy_names))).all()
+        session.exec(select(EvaluationTask).where(EvaluationTask.name.in_(LEGACY_TASK_NAMES))).all()
     )
     if not legacy_tasks:
         return

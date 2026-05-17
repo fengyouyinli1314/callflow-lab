@@ -37,15 +37,30 @@ class ReportService:
             avg_latency_ms=rule_result["metrics"]["avg_latency_ms"],
             failed_rule_count=int(rule_result["metrics"].get("failed_rule_count", len(rule_result["failed_rules"]))),
             total_turns=len(messages),
+            matched_rules=rule_result.get("matched_rules", []),
             failed_rules=rule_result["failed_rules"],
-            suggestions=rule_result["suggestions"],
+            active_rules=rule_result.get("active_rules", {}),
+            pending_rules=rule_result.get("pending_rules", []),
+            current_stage=rule_result.get("current_stage", ""),
+            active_rules_explanation=rule_result.get("active_rules_explanation", ""),
+            llm_judge_result=llm_result,
+            suggestions=self._combine_suggestions(rule_result, llm_result),
             metric_details=self._sync_metric_detail_scores(rule_result["metric_details"], metrics),
             metric_explanations=self._sync_metric_explanation_scores(
                 rule_result.get("metric_explanations", []),
                 metrics,
+                llm_result,
             ),
             failure_cases=rule_result["failure_cases"],
-            explainability={**rule_result["explainability"], "score_formula": self._score_formula(metrics)},
+            explainability={
+                **rule_result["explainability"],
+                "overall_reason": llm_result.get(
+                    "overall_reason",
+                    rule_result["explainability"].get("overall_reason", ""),
+                ),
+                "llm_judge_result": llm_result,
+                "score_formula": self._score_formula(metrics),
+            },
             evidence_messages=rule_result.get("evidence_messages", []),
             score_formula=self._score_formula(metrics),
             messages=messages,
@@ -106,11 +121,17 @@ class ReportService:
             synced[key] = detail
         return synced
 
+    def _combine_suggestions(self, rule_result: Dict[str, Any], llm_result: Dict[str, Any]) -> List[str]:
+        values = list(rule_result.get("suggestions", [])) + list(llm_result.get("suggestions", []))
+        return list(dict.fromkeys([item for item in values if item]))
+
     def _sync_metric_explanation_scores(
         self,
         metric_explanations: List[Dict[str, Any]],
         metrics: Dict[str, float],
+        llm_result: Dict[str, Any] | None = None,
     ) -> List[Dict[str, Any]]:
+        llm_result = llm_result or {}
         by_key = {item.get("metric_key"): dict(item) for item in metric_explanations}
         rows: List[Dict[str, Any]] = []
         for key in SCORE_WEIGHTS:
@@ -122,5 +143,6 @@ class ReportService:
             item.setdefault("evidence_turns", [])
             item.setdefault("evidence_text", "")
             item.setdefault("suggestion", "暂无优化建议")
+            item["llm_score"] = llm_result.get(key, item["score"])
             rows.append(item)
         return rows

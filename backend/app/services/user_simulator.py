@@ -4,6 +4,7 @@ from dataclasses import asdict, dataclass, replace
 from difflib import SequenceMatcher
 from typing import Any, Dict, List, Tuple
 
+from app.services.agents.user_simulator_agent import UserSimulatorAgent
 from app.services.llm_client import LLMClient
 
 
@@ -22,6 +23,7 @@ class UserSimulator:
 
     def __init__(self) -> None:
         self.llm_client = LLMClient()
+        self.agent = UserSimulatorAgent()
 
     def generate_message(
         self,
@@ -30,9 +32,7 @@ class UserSimulator:
         history: List[Dict[str, Any]],
         turn_index: int,
     ) -> Dict[str, Any]:
-        state = self._build_state(task_payload, case_payload, history, turn_index)
-        result = self._mock_turn(task_payload, case_payload, history, turn_index, state)
-        result["content"] = self._avoid_repeat(result["content"], history)
+        result = self.agent.generate_message(task_payload, case_payload, history, turn_index)
 
         if not self.llm_client.use_mock:
             fallback = result["content"]
@@ -63,6 +63,15 @@ class UserSimulator:
                 ],
                 fallback,
             )
+            result["content"] = self.agent.deduplicate_user_message(
+                result["content"],
+                history,
+                result.get("user_state", {}),
+            )
+        user_state = result.setdefault("user_state", {})
+        if user_state.get("goal_progress") != "rejected" and self._user_message_closes(result.get("content", "")):
+            result["should_continue"] = False
+            user_state["goal_progress"] = "accepted"
         return result
 
     def generate_next_message(
@@ -381,7 +390,7 @@ class UserSimulator:
                 return "course_repeated"
             return "course_owner"
 
-        if self._has_any(text, ["情绪", "不满", "投诉"]):
+        if self._has_any(text, ["情绪", "不满", "强烈反馈"]):
             return "angry"
         if self._has_any(text, ["反复追问"]):
             return "repeated"
@@ -656,6 +665,22 @@ class UserSimulator:
         if content != previous_user:
             return content
         return f"{content} 这次请你换个说法直接回答。"
+
+    def _user_message_closes(self, content: str) -> bool:
+        return self._has_any(
+            content,
+            [
+                "知道了",
+                "明白了",
+                "尽量跑",
+                "按合同要求",
+                "注意安全",
+                "去 App 看看",
+                "让负责人看一下",
+                "稍后联系",
+                "先挂了",
+            ],
+        )
 
     def _joined(self, *values: Any) -> str:
         parts: List[str] = []

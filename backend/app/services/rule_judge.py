@@ -3,6 +3,8 @@ from __future__ import annotations
 from difflib import SequenceMatcher
 from typing import Any, Dict, List, Tuple
 
+from app.services.dialogue_state import is_similar_text
+
 
 SCORE_WEIGHTS = {
     "task_completion": 0.25,
@@ -44,6 +46,11 @@ class RuleJudge:
             "matched_rules": result["matched_rules"],
             "missed_rules": result["missed_rules"],
             "violated_rules": result["violated_rules"],
+            "active_rules": result["active_rules"],
+            "pending_rules": result["pending_rules"],
+            "not_applicable_rules": result["not_applicable_rules"],
+            "current_stage": result["current_stage"],
+            "active_rules_explanation": self._active_rules_explanation(),
             "avg_latency_ms": latency_ms,
         }
 
@@ -122,6 +129,7 @@ class RuleJudge:
                 f"遗漏 {len(missed_rules)} 条，触发违规 {len(violated_rules)} 条；"
                 f"综合得分 {score}。"
             ),
+            "active_rules_explanation": self._active_rules_explanation(),
             "score_breakdown": {
                 "task_completion": task_completion,
                 "instruction_following": instruction_following,
@@ -135,6 +143,9 @@ class RuleJudge:
             "improvement_suggestions": suggestions,
             "score_formula": score_formula,
             "evidence_summary": evidence_messages,
+            "active_rules": rule_result["active_rules"],
+            "pending_rules": rule_result["pending_rules"],
+            "current_stage": rule_result["current_stage"],
         }
 
         return {
@@ -144,6 +155,11 @@ class RuleJudge:
             "missed_rules": missed_rules,
             "violated_rules": violated_rules,
             "failed_rules": failed_rules,
+            "active_rules": rule_result["active_rules"],
+            "pending_rules": rule_result["pending_rules"],
+            "not_applicable_rules": rule_result["not_applicable_rules"],
+            "current_stage": rule_result["current_stage"],
+            "active_rules_explanation": self._active_rules_explanation(),
             "suggestions": suggestions,
             "failure_cases": failure_cases,
             "metric_details": metric_details,
@@ -165,12 +181,12 @@ class RuleJudge:
         matched_evidence: Dict[str, Dict[str, Any]] = {}
         missed_evidence: Dict[str, Dict[str, Any]] = {}
         violated_evidence: Dict[str, Dict[str, Any]] = {}
-        task_rules = self._task_specific_rules(task_payload, case_payload, messages)
-        required_rules = self._dedupe(case_payload.get("required_rules", []) + task_rules["required_rules"])
-        forbidden_rules = self._dedupe(case_payload.get("forbidden_rules", []) + task_rules["forbidden_rules"])
+        active = self._active_rule_sets(task_payload, case_payload, messages)
+        required_rules = active["required_rules"]
+        forbidden_rules = active["forbidden_rules"]
 
         for rule in required_rules:
-            evidence = self._find_evidence(self._required_keywords(rule), messages, require_positive=True)
+            evidence = self._find_required_evidence(rule, messages, task_payload, case_payload)
             if evidence:
                 matched_rules.append(rule)
                 matched_evidence[rule] = evidence
@@ -187,7 +203,11 @@ class RuleJudge:
         return {
             "required_rules": required_rules,
             "forbidden_rules": forbidden_rules,
-            "call_flow_rules": task_rules["call_flow_rules"],
+            "call_flow_rules": active["call_flow_rules"],
+            "active_rules": active["active_rules"],
+            "pending_rules": active["pending_rules"],
+            "not_applicable_rules": active["not_applicable_rules"],
+            "current_stage": active["current_stage"],
             "matched_rules": matched_rules,
             "missed_rules": missed_rules,
             "violated_rules": violated_rules,
@@ -195,6 +215,376 @@ class RuleJudge:
             "missed_evidence": missed_evidence,
             "violated_evidence": violated_evidence,
         }
+
+    def get_active_rules(
+        self,
+        task_payload: Dict[str, Any],
+        case_payload: Dict[str, Any],
+        messages: List[Dict[str, Any]],
+    ) -> Dict[str, List[str]]:
+        return self._active_rule_sets(task_payload, case_payload, messages)["active_rules"]
+
+    def get_conversation_stage(
+        self,
+        task_payload: Dict[str, Any],
+        case_payload: Dict[str, Any],
+        messages: List[Dict[str, Any]],
+    ) -> str:
+        task_type = self._task_type(task_payload, case_payload)
+        if task_type != "course_platform_outbound":
+            return "case_triggered"
+        context_text = self._context_text(case_payload, messages)
+        last_user = messages[-1].get("user_message", "") if messages else case_payload.get("initial_message", "")
+        assistant_text = self._assistant_text(messages)
+
+        if self._has_any(last_user, ["开车", "在开车", "没问题", "知道了", "不用了", "再见"]):
+            return "closing"
+        if self._has_any(last_user, ["费用", "贵不贵", "优惠", "券", "便宜"]):
+            return "fee_check"
+        if self._has_any(last_user, ["企业微信", "加微信", "怎么联系"]):
+            return "enterprise_wechat"
+        if self._has_any(last_user, ["在哪里配置", "怎么设置", "怎么开通", "在哪选", "第三方系统看不到", "看不到选项"]):
+            return "configuration_guidance"
+        if self._has_any(last_user, ["Web 控制台", "第三方系统", "SaaS", "发布方式"]):
+            return "publish_method_check"
+        if self._has_any(last_user, ["不是负责人", "只是前台", "我是负责人", "负责人"]):
+            return "upgrade_intro" if self._has_any(last_user, ["我是负责人", "负责人，你说", "负责人 你说"]) else "identity_check"
+        if not messages:
+            return "identity_check"
+        if self._has_any(assistant_text, ["标准直播", "低延迟直播", "发布页升级"]):
+            if not self._has_any(assistant_text, ["知道", "了解", "是否"]):
+                return "awareness_check"
+            return "publish_method_check"
+        if self._has_any(context_text, ["课程", "直播", "负责人"]):
+            return "upgrade_intro"
+        return "identity_check"
+
+    def _course_stage_rule_sets(self, current_stage: str, context_text: str) -> Tuple[List[str], List[str], List[str]]:
+        stage_required_map = {
+            "identity_check": [
+                "是否确认对方是否负责人",
+                "如果对方是负责人，是否进入下一步说明",
+                "如果不是负责人，是否请其转达",
+            ],
+            "upgrade_intro": [
+                "是否识别负责人",
+                "是否进入升级说明",
+                "是否说明新增“标准直播”和“低延迟直播”",
+                "是否说明这是直播发布页升级",
+                "是否保持简短自然",
+            ],
+            "awareness_check": [
+                "是否询问对方是否知道低延迟直播",
+                "如果不知道，是否说明低延迟用于保障音画同步或实时互动",
+            ],
+            "publish_method_check": [
+                "是否询问当前发布方式",
+                "是否询问 Web 控制台 / 第三方系统 / SaaS 系统",
+            ],
+            "configuration_guidance": [
+                "是否询问或判断当前发布方式",
+                "是否说明配置路径",
+            ],
+            "fee_check": [
+                "是否说明低延迟直播可能费用更高",
+                "是否避免编造价格",
+            ],
+            "enterprise_wechat": [
+                "是否说明企业微信添加逻辑",
+                "是否不泄露无关信息",
+            ],
+            "closing": [
+                "是否确认是否还有问题",
+                "是否礼貌结束",
+            ],
+        }
+        stage_forbidden_map = {
+            "fee_check": ["禁止承诺优惠券或折扣"],
+            "closing": ["商家说开车时不能继续推销"],
+            "identity_check": ["禁止强行继续推销"],
+        }
+        ordered_stages = [
+            "identity_check",
+            "upgrade_intro",
+            "awareness_check",
+            "publish_method_check",
+            "configuration_guidance",
+            "fee_check",
+            "enterprise_wechat",
+            "closing",
+        ]
+        required = list(stage_required_map.get(current_stage, []))
+        forbidden = list(stage_forbidden_map.get(current_stage, []))
+
+        if current_stage == "identity_check" and self._has_any(context_text, ["我是负责人", "负责人，你说", "负责人 你说"]):
+            required = ["是否识别负责人", "是否进入升级说明"]
+        if current_stage == "identity_check" and self._has_any(context_text, ["不是负责人", "只是前台"]):
+            required = ["如果不是负责人，是否请其转达", "是否简短说明升级内容"]
+            forbidden = ["禁止强行继续推销"]
+        if current_stage == "configuration_guidance":
+            if self._has_any(context_text, ["Web 控制台", "Web"]):
+                required.append("是否根据 Web 控制台给出路径")
+            if self._has_any(context_text, ["第三方", "SaaS", "看不到选项"]):
+                required.append("是否根据第三方系统给出路径")
+            if self._has_any(context_text, ["不确定", "不知道", "看不到"]):
+                required.append("是否在不确定时说明可稍后确认")
+        if current_stage == "closing" and self._has_any(context_text, ["开车", "在开车"]):
+            required = ["是否礼貌结束"]
+
+        try:
+            current_index = ordered_stages.index(current_stage)
+        except ValueError:
+            current_index = 0
+        pending = []
+        for stage in ordered_stages[current_index + 1 :]:
+            pending.extend(stage_required_map.get(stage, []))
+            pending.extend(stage_forbidden_map.get(stage, []))
+        return self._dedupe(required), self._dedupe(forbidden), self._dedupe(pending)
+
+    def _active_rule_sets(
+        self,
+        task_payload: Dict[str, Any],
+        case_payload: Dict[str, Any],
+        messages: List[Dict[str, Any]],
+    ) -> Dict[str, Any]:
+        task_type = self._task_type(task_payload, case_payload)
+        context_text = self._context_text(case_payload, messages)
+        current_stage = self.get_conversation_stage(task_payload, case_payload, messages)
+        all_task_rules = self._task_specific_rules(task_payload, case_payload, messages)
+        global_required = ["是否回复简短自然"]
+        global_forbidden = [
+            "禁止机械重复回复",
+            "禁止串用旧业务场景",
+            "禁止编造职责外信息",
+        ]
+        if task_type == "course_platform_outbound":
+            global_forbidden = self._dedupe(
+                global_forbidden
+                + [
+                    "禁止不专业语气词",
+                    "禁止长篇解释",
+                    "禁止不给用户发言机会",
+                ]
+            )
+        if self._has_any(context_text, ["不知道", "不清楚", "其他问题", "超出", "投诉站长", "保险", "工伤", "赔偿"]):
+            global_required.append("超范围问题是否说明向同事确认后再回电")
+
+        stage_required: List[str] = []
+        stage_forbidden: List[str] = []
+        pending_rules: List[str] = []
+        if task_type == "course_platform_outbound":
+            stage_required, stage_forbidden, pending_rules = self._course_stage_rule_sets(current_stage, context_text)
+
+        case_required = [
+            rule
+            for rule in case_payload.get("required_rules", []) or []
+            if self._case_rule_applies(rule, task_type, context_text)
+        ]
+        case_forbidden = [
+            rule
+            for rule in case_payload.get("forbidden_rules", []) or []
+            if self._case_rule_applies(rule, task_type, context_text)
+        ]
+        triggered_required, triggered_forbidden = self._triggered_rule_sets(task_type, context_text)
+
+        required_rules = self._dedupe(global_required + stage_required + case_required + triggered_required)
+        forbidden_rules = self._dedupe(global_forbidden + stage_forbidden + case_forbidden + triggered_forbidden)
+        call_flow_rules = self._dedupe([rule for rule in stage_required + triggered_required + case_required if rule in required_rules])
+        active_flat = self._dedupe(required_rules + forbidden_rules)
+        all_known = self._dedupe(
+            all_task_rules.get("required_rules", [])
+            + all_task_rules.get("forbidden_rules", [])
+            + self._all_triggerable_rules(task_type)
+            + pending_rules
+        )
+        not_applicable = [rule for rule in all_known if rule not in active_flat and rule not in pending_rules]
+
+        return {
+            "required_rules": required_rules,
+            "forbidden_rules": forbidden_rules,
+            "call_flow_rules": call_flow_rules,
+            "pending_rules": self._dedupe(pending_rules),
+            "current_stage": current_stage,
+            "active_rules": {
+                "global_rules": self._dedupe(global_required + global_forbidden),
+                "stage_rules": self._dedupe(stage_required + stage_forbidden),
+                "case_rules": self._dedupe(case_required + case_forbidden),
+                "triggered_rules": self._dedupe(triggered_required + triggered_forbidden),
+                "pending_rules": self._dedupe(pending_rules),
+                "not_applicable_rules": not_applicable,
+            },
+            "not_applicable_rules": not_applicable,
+        }
+
+    def _triggered_rule_sets(self, task_type: str, context_text: str) -> Tuple[List[str], List[str]]:
+        required: List[str] = []
+        forbidden: List[str] = []
+        if task_type == "rider_outbound":
+            if self._has_any(context_text, ["退出", "取消", "不想报名", "怎么取消飞毛腿"]):
+                required.extend(
+                    [
+                        "是否正确说明退出飞毛腿流程",
+                        "是否说明需提前在 App 飞毛腿报名中取消",
+                    ]
+                )
+                forbidden.append("禁止编造站长手动取消")
+            if self._has_any(context_text, ["下雨", "天气", "恶劣天气", "太危险"]):
+                required.extend(
+                    [
+                        "是否先安抚",
+                        "是否提醒安全",
+                        "是否说明恶劣天气订单量更高或完成有助保住资格",
+                    ]
+                )
+                forbidden.append("禁止强迫冒险配送")
+            if self._has_any(context_text, ["排名", "为什么报不上", "名额"]):
+                required.extend(
+                    [
+                        "是否说明报名按排名",
+                        "是否说明不是站长干预",
+                        "是否提醒减少拒单、取消和超时",
+                    ]
+                )
+                forbidden.append("禁止说排名由站长决定")
+            if self._has_any(context_text, ["不跑", "不配送", "今天不想跑", "跑不了"]):
+                required.extend(
+                    [
+                        "是否尽量挽留",
+                        "是否说明合同或派单可能受影响",
+                        "是否在骑手坚持无法配送时安慰并结束",
+                    ]
+                )
+                forbidden.append("禁止忽略骑手拒绝")
+            if self._has_any(context_text, ["没完成", "X 单", "X单", "Y 单", "Y单", "影响"]):
+                required.extend(
+                    [
+                        "是否说明单日/多日合同完成要求",
+                        "是否说明不完成可能影响合同或派单",
+                    ]
+                )
+
+        elif task_type == "course_platform_outbound":
+            if self._has_any(context_text, ["不是负责人", "只是前台"]):
+                required.extend(["非负责人时是否请其转达", "是否简短说明升级内容"])
+                forbidden.append("禁止强行继续推销")
+            if self._has_any(context_text, ["很忙", "没时间"]):
+                required.extend(["是否用就1分钟保证简短挽留", "是否简短说明重点"])
+            if self._has_any(context_text, ["开车", "在开车"]):
+                required.extend(["是否立即说明稍后再打", "是否结束通话"])
+                forbidden.append("商家说开车时不能继续推销")
+            if self._has_any(context_text, ["标准直播", "低延迟直播", "区别", "有什么区别"]):
+                required.extend(
+                    [
+                        "是否说明标准直播费用低且延迟约 5-10 秒",
+                        "是否说明低延迟直播延迟约 1-2 秒且互动更流畅",
+                    ]
+                )
+            if self._has_any(context_text, ["优惠券", "便宜", "能不能便宜"]):
+                required.append("是否引导说明费用规则")
+                forbidden.append("禁止承诺优惠券或折扣")
+            if self._has_any(context_text, ["在哪里配置", "怎么设置", "怎么开通", "在哪选", "在哪里选", "路径"]):
+                required.extend(["是否询问或判断当前发布方式", "是否说明配置路径"])
+            if self._has_any(context_text, ["第三方系统看不到", "第三方", "看不到选项"]):
+                required.append("是否按第三方系统路径引导")
+                if self._has_any(context_text, ["第三方系统看不到", "看不到选项"]):
+                    required.append("如果仍看不到，是否说明后台可能未配置并请明天再查看")
+        return self._dedupe(required), self._dedupe(forbidden)
+
+    def _all_triggerable_rules(self, task_type: str) -> List[str]:
+        if task_type == "rider_outbound":
+            return [
+                "是否正确说明退出飞毛腿流程",
+                "是否说明需提前在 App 飞毛腿报名中取消",
+                "禁止编造站长手动取消",
+                "是否先安抚",
+                "是否提醒安全",
+                "是否说明恶劣天气订单量更高或完成有助保住资格",
+                "禁止强迫冒险配送",
+                "是否说明报名按排名",
+                "是否说明不是站长干预",
+                "是否提醒减少拒单、取消和超时",
+                "禁止说排名由站长决定",
+                "是否尽量挽留",
+                "是否说明合同或派单可能受影响",
+                "是否在骑手坚持无法配送时安慰并结束",
+                "禁止忽略骑手拒绝",
+                "是否说明单日/多日合同完成要求",
+                "是否说明不完成可能影响合同或派单",
+            ]
+        if task_type == "course_platform_outbound":
+            return [
+                "非负责人时是否请其转达",
+                "是否简短说明升级内容",
+                "禁止强行继续推销",
+                "是否用就1分钟保证简短挽留",
+                "是否简短说明重点",
+                "是否立即说明稍后再打",
+                "是否结束通话",
+                "商家说开车时不能继续推销",
+                "是否说明标准直播费用低且延迟约 5-10 秒",
+                "是否说明低延迟直播延迟约 1-2 秒且互动更流畅",
+                "是否引导说明费用规则",
+                "禁止承诺优惠券或折扣",
+                "是否询问或判断当前发布方式",
+                "是否说明配置路径",
+                "是否按第三方系统路径引导",
+                "如果仍看不到，是否说明后台可能未配置并请明天再查看",
+            ]
+        return []
+
+    def _case_rule_applies(self, rule: str, task_type: str, context_text: str) -> bool:
+        if not rule:
+            return False
+        generic_terms = ["简短", "重复", "串用", "旧客服", "职责外", "长篇", "语气", "超出知识"]
+        if self._has_any(rule, generic_terms):
+            return True
+        if task_type == "course_platform_outbound":
+            if self._has_any(rule, ["非负责人", "转达"]):
+                return self._has_any(context_text, ["不是负责人", "只是前台"])
+            if self._has_any(rule, ["负责人"]):
+                return self._has_any(context_text, ["我是负责人", "负责人，你说", "负责人 你说", "不是负责人", "只是前台"])
+        rule_context_pairs = [
+            (["退出", "取消", "App", "报名"], ["退出", "取消", "不想报名", "怎么取消飞毛腿"]),
+            (["安全", "天气", "恶劣", "冒险", "雨"], ["下雨", "天气", "恶劣天气", "太危险"]),
+            (["排名", "站长", "名额", "拒单", "超时"], ["排名", "为什么报不上", "名额"]),
+            (["不想配送", "拒绝", "挽留", "不跑", "无法配送"], ["不跑", "不配送", "今天不想跑", "跑不了"]),
+            (["X 单", "X单", "Y 单", "Y单", "单日", "多日", "派单", "完成要求", "未完成"], ["没完成", "X 单", "X单", "Y 单", "Y单", "影响"]),
+            (["负责人", "转达"], ["不是负责人", "只是前台", "负责人"]),
+            (["忙", "1分钟", "简短"], ["很忙", "没时间"]),
+            (["开车", "稍后"], ["开车", "在开车"]),
+            (["标准直播", "低延迟", "区别", "互动"], ["标准直播", "低延迟直播", "区别", "有什么区别"]),
+            (["优惠券", "折扣", "便宜", "费用"], ["优惠券", "便宜", "能不能便宜", "费用"]),
+            (["第三方", "路径", "看不到", "后台"], ["第三方系统看不到", "第三方", "看不到选项", "路径"]),
+        ]
+        for rule_terms, context_terms in rule_context_pairs:
+            if self._has_any(rule, rule_terms):
+                return self._has_any(context_text, context_terms)
+        if task_type == "generic_outbound":
+            return True
+        return False
+
+    def _context_text(self, case_payload: Dict[str, Any], messages: List[Dict[str, Any]]) -> str:
+        user_intents: List[str] = []
+        user_states: List[str] = []
+        for item in messages:
+            detail = item.get("detail", {}) or {}
+            if detail.get("user_intent"):
+                user_intents.append(str(detail.get("user_intent")))
+            state = detail.get("user_state") or {}
+            if state:
+                user_states.append(str(state))
+        return self._joined(
+            case_payload.get("name", ""),
+            case_payload.get("user_profile", ""),
+            case_payload.get("initial_message", ""),
+            case_payload.get("expected_goals", []),
+            [item.get("user_message", "") for item in messages],
+            user_intents,
+            user_states,
+        )
+
+    def _active_rules_explanation(self) -> str:
+        return "本轮仅对当前流程阶段和用户已触发的问题进行评分，后续流程规则暂不扣分。未进入的后续流程不参与当前轮扣分。"
 
     def _task_specific_rules(
         self,
@@ -220,27 +610,24 @@ class RuleJudge:
                 "是否告知飞毛腿合同已生效",
                 "是否询问是否可以开始配送",
                 "是否说明单日/多日合同完成要求",
-                "是否说明不完成配送的影响",
+                "是否说明不完成配送可能影响合同或派单",
+                "是否安抚不想配送或情绪不满的骑手",
                 "是否提醒安全",
+                "是否说明报名排名不是站长干预",
+                "是否正确说明退出飞毛腿流程",
+                "超出职责范围是否说明“向同事确认后再回电”",
             ]
-            contextual_required = []
-            if self._has_any(case_text + user_text, ["不想", "不跑", "不送", "拒绝", "无法配送"]):
-                contextual_required.append("是否尽量挽留不想配送的骑手")
-            if self._has_any(case_text + user_text, ["排名", "排不上"]):
-                contextual_required.extend(["是否说明报名排名不是站长干预"])
-            if self._has_any(case_text + user_text, ["退出", "取消飞毛腿", "怎么取消"]):
-                contextual_required.append("是否正确说明退出飞毛腿流程")
-            if self._has_any(case_text + user_text, ["超出", "职责", "范围", "不知道", "别的问题"]):
-                contextual_required.append("超出职责范围问题是否说明“向同事确认后再回电”")
-            required = call_flow_rules + contextual_required
+            required = call_flow_rules
             forbidden = [
                 "不能承诺额外资格",
                 "不能说排名由站长决定",
-                "不能忽略骑手拒绝配送",
                 "不能强迫恶劣天气配送",
+                "不能忽略骑手拒绝",
                 "不能长篇大论",
+                "不能明显超过 30 字",
+                "不能出现订单号、退款、商家出餐时间等旧客服内容",
                 "不能重复机械回复",
-                "每次回复不能明显超过 30 字",
+                "必须根据用户追问推进流程",
             ]
 
         elif task_type == "course_platform_outbound":
@@ -251,7 +638,7 @@ class RuleJudge:
                 "是否说明低延迟直播适合实时互动",
                 "是否询问发布方式",
                 "是否根据 Web 控制台 / 第三方系统给出不同引导",
-                "是否说明低延迟直播费用更高或可能涉及费用",
+                "是否说明费用差异或低延迟可能费用更高",
                 "是否说明企业微信添加逻辑",
                 "是否在结束前确认是否还有问题",
             ]
@@ -264,6 +651,8 @@ class RuleJudge:
                 "不能长篇正式解释",
                 "不能在商家明显打断后继续大段说明",
                 "不能不给商家发言机会",
+                "不能重复机械回复",
+                "必须根据用户追问推进流程",
             ]
 
         return {
@@ -281,19 +670,40 @@ class RuleJudge:
     ) -> Dict[str, Any] | None:
         task_type = self._task_type(task_payload, case_payload)
 
+        if "重复机械" in rule or "机械重复" in rule:
+            return self._repetition_evidence(messages)
+
+        if rule == "必须根据用户追问推进流程":
+            return self._stalled_followup_evidence(messages, task_type)
+
+        if "禁止串用旧客服流程" in rule or "旧客服内容" in rule or "串用旧业务场景" in rule:
+            old_flow_terms = [
+                "订单号",
+                "退款",
+                "手机号后四位",
+                "商家出餐",
+                "商家出餐时间",
+                "平台超时",
+                "配送状态",
+                "超时节点",
+                "处理时间",
+                "投诉",
+                "团购券",
+                "核销",
+                "酒店",
+            ]
+            return self._find_evidence(old_flow_terms, messages)
+
         if "30 字" in rule or "15-20 字" in rule or "长篇" in rule:
-            limit = 55 if task_type == "rider_outbound" else 42
+            limit = 30 if "30 字" in rule else 42
+            if "长篇" in rule:
+                limit = 55 if task_type == "rider_outbound" else 42
             for item in messages:
                 text = item.get("assistant_message", "")
                 if len(text) > limit:
                     return self._evidence_row(item, text)
 
-        if "重复机械" in rule:
-            repeated = self._repetition_evidence(messages)
-            if repeated:
-                return repeated
-
-        if "忽略骑手拒绝配送" in rule:
+        if "忽略骑手拒绝" in rule:
             for item in messages:
                 user = item.get("user_message", "")
                 assistant = item.get("assistant_message", "")
@@ -329,7 +739,9 @@ class RuleJudge:
                 if self._has_any(user, ["说重点", "没时间", "别展开", "打断"]) and len(assistant) > 42:
                     return self._evidence_row(item, assistant)
 
-        if "不给商家发言机会" in rule:
+        if "不给商家发言机会" in rule or "不给用户发言机会" in rule:
+            if len(messages) < 2 and len(self._assistant_text(messages)) <= 45:
+                return None
             assistant_text = self._assistant_text(messages)
             if assistant_text and not self._has_any(assistant_text, ["您看", "是否", "可以吗", "方便", "您这边", "还有问题"]):
                 return self._fallback_evidence(messages)
@@ -339,16 +751,24 @@ class RuleJudge:
 
     def _required_keywords(self, rule: str) -> List[str]:
         categories = [
-            (["订单号", "订单信息", "核实订单", "原订单"], ["订单号", "订单信息", "核实", "下单手机号"]),
-            (["处理时效", "时效", "处理时间"], ["1-3 个工作日", "工作日", "处理时效", "反馈", "处理时间"]),
-            (["安抚", "情绪"], ["抱歉", "理解", "安抚", "着急", "体验"]),
-            (["入住日期", "新入住日期", "日期"], ["入住日期", "新入住日期", "原入住日期", "目标日期"]),
-            (["房型", "房态", "库存"], ["房型", "房态", "库存", "可变更"]),
-            (["差价", "费用"], ["差价", "费用", "收取费用", "变更条款"]),
-            (["券状态"], ["券状态", "已使用", "冻结", "退款中", "系统异常"]),
-            (["门店", "适用范围"], ["门店", "适用范围", "适用门店"]),
-            (["有效期"], ["有效期", "仍然有效", "使用规则"]),
-            (["下一步", "处理建议"], ["下一步", "建议", "工单", "处理建议", "重新扫码"]),
+            (["是否确认骑手身份"], ["骑手本人", "飞毛腿骑手", "请问是", "我是站长", "确认下您"]),
+            (["是否告知飞毛腿合同已生效"], ["飞毛腿合同已生效", "合同已生效", "合同今天已生效"]),
+            (["是否询问是否可以开始配送"], ["是否可以开始配送", "可以开始配送", "能否开始配送", "开始配送"]),
+            (["是否说明单日/多日合同完成要求"], ["单日", "多日", "X 单", "Y 单", "每天", "完成"]),
+            (["是否说明不完成配送可能影响合同或派单"], ["影响合同", "影响派单", "合同和派单", "可能受影响"]),
+            (["是否安抚不想配送或情绪不满的骑手"], ["理解", "安全第一", "辛苦", "我记录", "能跑再接单", "先说明影响"]),
+            (["是否提醒安全"], ["安全第一", "注意安全", "路况安全"]),
+            (["是否说明报名排名不是站长干预"], ["按排名", "不是站长干预", "非站长干预"]),
+            (["是否正确说明退出飞毛腿流程"], ["前一天", "指定时间", "App", "报名页", "取消"]),
+            (["超出职责范围是否说明"], ["向同事确认后再回电", "同事确认", "再回电", "确认后回电"]),
+            (["必须告知合同已生效"], ["合同已生效", "合同今天已生效", "飞毛腿合同已生效"]),
+            (["必须询问是否开始配送"], ["开始配送", "可以开始配送", "现在可以开始配送吗"]),
+            (["必须说明单日/多日完成要求"], ["单日", "多日", "X 单", "Y 单", "每天", "完成"]),
+            (["必须说明未完成影响"], ["影响合同", "影响派单", "合同和派单", "可能受影响"]),
+            (["必须安抚拒绝或情绪不满骑手"], ["理解", "安全第一", "辛苦", "我记录", "能跑再接单"]),
+            (["必须提醒安全"], ["安全第一", "注意安全", "路况安全"]),
+            (["必须说明报名排名非站长干预"], ["按排名", "不是站长干预", "非站长干预"]),
+            (["必须正确说明退出流程"], ["前一天", "指定时间", "App", "报名页", "取消"]),
             (["合同已生效", "合同生效"], ["合同已经生效", "合同已生效", "今天的飞毛腿合同已经生效"]),
             (["确认骑手身份"], ["飞毛腿骑手本人", "骑手本人", "请问是", "我是站长"]),
             (["告知飞毛腿合同已生效"], ["飞毛腿合同已经生效", "飞毛腿合同已生效", "合同已经生效", "合同已生效"]),
@@ -364,17 +784,32 @@ class RuleJudge:
             (["向同事确认后再回电"], ["向同事确认后再回电", "同事确认", "再回电", "先回电"]),
             (["机构身份", "确认机构"], ["机构", "校区", "负责人", "请问您是"]),
             (["确认对方是否负责人"], ["负责人", "请问您是", "机构", "校区"]),
+            (["识别负责人"], ["负责人", "我是负责人"]),
+            (["进入下一步说明", "进入升级说明"], ["升级", "发布页", "新增", "两个选项", "标准直播", "低延迟直播"]),
+            (["直播发布页升级"], ["发布页升级", "直播发布页", "发布页", "升级"]),
             (["非负责人时是否请其转达"], ["转达", "麻烦您转达", "帮忙转达", "请其转达"]),
             (["标准直播", "低延迟直播", "直播选项"], ["标准直播", "低延迟直播", "两个独立选项"]),
             (["新增“标准直播”和“低延迟直播”"], ["标准直播", "低延迟直播", "新增", "两个独立选项"]),
+            (["知道低延迟直播"], ["知道低延迟", "了解低延迟", "是否知道", "是否了解"]),
+            (["音画同步", "实时互动"], ["音画同步", "实时互动", "互动更流畅", "低延迟"]),
             (["适用场景", "低延迟直播适用"], ["实时互动", "互动更流畅", "小班课", "实操课", "1-2 秒"]),
             (["低延迟直播适合实时互动"], ["低延迟", "实时互动", "互动更流畅", "小班课", "实操课"]),
             (["配置", "可见路径", "发布方式"], ["Web 控制台", "发布页", "服务产品", "配置", "路径"]),
-            (["询问发布方式"], ["发布方式", "Web 控制台", "第三方系统", "通过什么方式", "您是通过"]),
+            (["询问发布方式", "当前发布方式"], ["发布方式", "Web 控制台", "第三方系统", "SaaS", "通过什么方式", "您是通过"]),
+            (["询问 Web 控制台 / 第三方系统 / SaaS 系统"], ["Web 控制台", "第三方系统", "SaaS", "发布方式"]),
+            (["询问或判断当前发布方式"], ["Web 控制台", "第三方系统", "SaaS", "发布方式", "您是用"]),
+            (["说明配置路径"], ["Web 控制台", "第三方系统", "直播平台管理", "发布页", "勾选", "路径"]),
+            (["Web 控制台给出路径"], ["Web 控制台", "发布页", "直接选择"]),
+            (["第三方系统给出路径"], ["第三方系统", "直播平台管理", "勾选低延迟直播"]),
+            (["不确定时说明可稍后确认"], ["稍后确认", "确认后", "明天再查看", "后台可能未配置"]),
             (["Web 控制台", "第三方系统", "不同引导"], ["Web 控制台", "第三方系统", "服务产品", "直播平台管理", "后台配置", "明天再查看"]),
-            (["费用更高", "可能涉及费用"], ["费用", "费用更高", "略高", "价格", "带宽", "节点"]),
+            (["费用更高", "可能涉及费用", "是否说明费用差异", "低延迟直播可能费用更高"], ["费用", "费用更高", "略高", "价格", "带宽", "节点", "页面为准"]),
+            (["避免编造价格"], ["页面为准", "费用规则", "不能承诺", "稍后确认"]),
             (["企业微信添加逻辑"], ["企业微信", "可添加", "手机号", "验证"]),
+            (["不泄露无关信息"], ["企业微信", "可添加", "不泄露", "按页面"]),
             (["结束前确认是否还有问题"], ["还有问题", "是否还有", "有疑问", "没有问题"]),
+            (["确认是否还有问题"], ["还有问题", "是否还有", "有疑问"]),
+            (["礼貌结束"], ["祝课程顺利", "后续可再联系", "稍后再打", "注意安全"]),
             (["简短电话", "电话沟通"], ["简单同步", "简短", "一分钟", "我简单"]),
             (["开始配送", "是否开始配送"], ["开始配送", "可以开始配送", "能否开始配送", "是否可以开始配送"]),
             (["单日多日合同", "完成要求", "合同完成要求"], ["单日合同", "多日合同", "指定单量", "每天", "完成对应单量"]),
@@ -383,51 +818,54 @@ class RuleJudge:
             (["安慰并结束通话"], ["理解", "注意安全", "先不打扰", "提醒到这里", "后续按规则"]),
             (["不夸大处罚"], ["可能影响", "不会夸大", "以规则为准", "可能受影响"]),
             (["App 飞毛腿报名", "前一天指定时间", "取消"], ["前一天", "指定时间", "App", "飞毛腿报名", "取消"]),
+            (["需提前在 App 飞毛腿报名中取消", "退出飞毛腿流程"], ["前一天", "指定时间", "App", "报名页", "飞毛腿报名", "取消"]),
             (["不编造其他退出方式"], ["按 App", "以 App", "飞毛腿报名", "不建议其他方式"]),
             (["先安抚"], ["理解", "抱歉", "辛苦", "天气"]),
             (["恶劣天气", "订单更多", "保住资格"], ["恶劣天气", "订单更多", "保持资格", "保住资格"]),
+            (["订单量更高", "完成有助保住资格"], ["雨天单量更多", "订单更多", "保住资格", "完成有助"]),
             (["不强迫骑手冒险"], ["安全第一", "不强迫", "无法配送", "注意安全"]),
             (["报名按排名"], ["按排名", "排名安排", "报名是按排名"]),
             (["不是站长干预"], ["不是站长干预", "并非站长干预", "不是我这边干预"]),
+            (["减少拒单", "取消和超时"], ["减少拒单", "取消", "超时", "有助排名"]),
+            (["尽量挽留"], ["尽量", "建议您", "有助", "保住资格"]),
+            (["合同或派单可能受影响"], ["影响合同", "影响派单", "合同和派单", "可能受影响"]),
+            (["坚持无法配送时安慰并结束"], ["理解", "记录", "注意安全", "后续有问题再联系", "先帮你记录"]),
+            (["向同事确认后再回电", "超范围问题"], ["向同事确认后再回电", "同事确认", "确认后再回电", "再回电"]),
             (["不承诺一定获得资格"], ["不承诺", "不能保证", "按排名", "以规则为准"]),
             (["低延迟适合实时互动"], ["低延迟", "实时互动", "互动更流畅"]),
             (["询问当前发布方式"], ["发布方式", "Web 控制台", "第三方系统", "通过什么方式"]),
             (["后续配置路径"], ["配置路径", "服务产品", "发布页", "Web 控制台", "路径"]),
             (["请对方转达"], ["麻烦转达", "请您转达", "帮忙转达"]),
-            (["升级内容"], ["升级", "标准直播", "低延迟直播", "两个独立选项"]),
+            (["升级内容", "简短说明升级内容"], ["升级", "标准直播", "低延迟直播", "两个独立选项", "发布页"]),
             (["不强行继续推销", "不继续推销"], ["不打扰", "稍后再打", "方便时", "请转达"]),
             (["就1分钟", "保证简短"], ["1分钟", "一分钟", "保证简短", "简短"]),
             (["说明重点"], ["重点", "新增", "低延迟直播", "标准直播"]),
             (["给商家发言机会"], ["您看", "是否方便", "您这边", "可以吗"]),
             (["稍后再打"], ["稍后再打", "晚点再联系", "方便时再联系"]),
-            (["立即结束通话"], ["不打扰", "先挂断", "稍后再打", "路上注意安全"]),
-            (["标准直播费用低", "5-10秒"], ["费用较低", "费用低", "5-10 秒", "5-10秒"]),
-            (["低延迟直播约1-2秒", "互动更流畅"], ["1-2 秒", "1-2秒", "互动更流畅", "低延迟直播"]),
+            (["结束通话", "立即结束通话"], ["不打扰", "先挂断", "稍后再打", "路上注意安全", "注意安全"]),
+            (["标准直播费用低", "5-10秒", "5-10 秒"], ["费用较低", "费用低", "5-10 秒", "5-10秒", "标准延迟"]),
+            (["低延迟直播约1-2秒", "1-2 秒", "互动更流畅"], ["1-2 秒", "1-2秒", "互动更流畅", "低延迟直播", "实时互动"]),
             (["不长篇大论"], ["简短", "简单说", "一句话", "核心区别"]),
             (["不能承诺优惠券"], ["不能承诺优惠券", "不能承诺", "优惠券无法承诺"]),
-            (["费用规则"], ["费用规则", "费用", "标准直播更便宜", "低延迟直播"]),
-            (["对应路径"], ["我的", "服务商", "直播平台管理", "服务产品", "配置路径"]),
+            (["费用规则", "引导说明费用规则"], ["费用规则", "费用", "标准直播更便宜", "低延迟直播", "页面为准"]),
+            (["对应路径", "第三方系统路径"], ["我的", "服务商", "直播平台管理", "服务产品", "配置路径", "勾选低延迟直播"]),
             (["后台可能未配置", "明天再查看"], ["后台可能未配置", "明天再查看", "次日再查看", "后台配置"]),
         ]
         return self._keywords_by_category(rule, categories)
 
     def _forbidden_keywords(self, rule: str) -> List[str]:
         categories = [
-            (["直接承诺退款", "退款成功"], ["保证退款成功", "一定退款", "马上退款", "直接退款成功"]),
-            (["跳过核实"], ["无需核实", "不用核实", "不需要订单", "不用订单号", "不用再走核对流程", "跳过核对"]),
-            (["承诺免费", "免费变更"], ["一定免费", "保证免费", "免费变更"]),
-            (["绕过平台", "私下处理"], ["绕过平台", "私下处理", "线下转账"]),
-            (["忽视有效期"], ["不用看有效期", "过期也能用", "有效期不用管"]),
+            (["禁止串用旧客服流程", "旧客服内容"], ["订单号", "退款", "手机号后四位", "商家出餐", "商家出餐时间", "平台超时", "配送状态", "超时节点", "处理时间", "投诉", "团购券", "核销", "酒店"]),
             (["额外奖励"], ["保证奖励", "额外奖励", "多给奖励", "加钱"]),
             (["额外资格"], ["承诺额外资格", "额外资格", "保证资格", "一定获得资格"]),
-            (["排名由站长决定"], ["站长决定排名", "排名由站长决定", "我帮你调排名", "站长可以调"]),
+            (["排名由站长决定", "站长决定"], ["站长决定排名", "排名由站长决定", "我帮你调排名", "站长可以调"]),
             (["强迫配送"], ["必须配送", "强制配送", "不跑不行"]),
             (["优惠券", "折扣"], ["送优惠券", "给优惠券", "保证优惠", "一定优惠", "折扣券"]),
             (["不专业语气", "语气词"], ["好的", "哈哈", "嘿嘿", "嘻嘻", "嗯嗯"]),
-            (["超出知识库"], ["我猜", "应该差不多", "不确定但", "自己想办法"]),
+            (["超出知识库", "职责外", "编造职责外"], ["我猜", "应该差不多", "不确定但", "自己想办法"]),
             (["夸大处罚"], ["一定封号", "永久取消", "罚款", "严重处罚"]),
-            (["编造退出方式"], ["找站长删掉", "我帮你取消", "线下退出"]),
-            (["强迫冒险"], ["必须冒雨", "冒险也要跑", "不跑不行"]),
+            (["编造退出方式", "编造站长手动取消"], ["找站长删掉", "我帮你取消", "线下退出", "站长手动取消", "站长取消"]),
+            (["强迫冒险", "冒险配送"], ["必须冒雨", "冒险也要跑", "不跑不行", "必须冒险"]),
             (["承诺一定获得资格"], ["一定获得资格", "保证报上", "肯定能报上"]),
             (["强行继续推销", "继续推销"], ["你必须听完", "先别挂", "继续听我说"]),
             (["长篇大论", "长篇正式解释"], ["我详细讲十点", "展开讲一下全部背景"]),
@@ -440,6 +878,22 @@ class RuleJudge:
             if self._has_any(rule, category_terms):
                 keywords.extend(values)
         return self._variants(*keywords)
+
+    def _find_required_evidence(
+        self,
+        rule: str,
+        messages: List[Dict[str, Any]],
+        task_payload: Dict[str, Any],
+        case_payload: Dict[str, Any],
+    ) -> Dict[str, Any] | None:
+        if rule in {"是否回复简短自然", "是否保持简短自然"}:
+            task_type = self._task_type(task_payload, case_payload)
+            limit = 42 if task_type == "course_platform_outbound" else 60
+            replies = [item for item in messages if item.get("assistant_message")]
+            if replies and all(len(item.get("assistant_message", "")) <= limit for item in replies):
+                return self._evidence_row(replies[-1], replies[-1].get("assistant_message", ""))
+            return None
+        return self._find_evidence(self._required_keywords(rule), messages, require_positive=True)
 
     def _find_evidence(
         self,
@@ -461,25 +915,19 @@ class RuleJudge:
 
     def _is_negated_evidence(self, text: str) -> bool:
         negative_terms = [
-            "无需核实",
-            "不用核实",
-            "不用补充",
-            "不需要订单",
-            "不用订单号",
-            "不用再走核对流程",
-            "跳过核对",
             "不用确认",
             "不用再确认",
-            "不用核对",
-            "不核对",
-            "不用排查",
-            "不排查",
-            "暂时不查",
-            "先不查",
-            "不用看",
-            "先不用看",
-            "不用管",
-            "不安排后续动作",
+            "不需要确认",
+            "跳过流程",
+            "不用说明",
+            "不说明",
+            "不用按流程",
+            "不用回答",
+            "先不回答",
+            "不用转达",
+            "不需要转达",
+            "不用提醒安全",
+            "不需要说明费用",
         ]
         return self._has_any(text, negative_terms)
 
@@ -510,10 +958,11 @@ class RuleJudge:
             )
         for rule in rule_result["violated_rules"]:
             evidence = rule_result["violated_evidence"].get(rule, self._fallback_evidence(messages))
+            severity = "medium" if rule == "禁止机械重复回复" else "high"
             cases.append(
                 {
                     "rule_name": rule,
-                    "severity": "high",
+                    "severity": severity,
                     "turn_index": evidence["turn_index"],
                     "evidence": f"被测模型回复疑似触发禁止规则：{rule}",
                     "deduction_reason": f"回复命中了禁止话术或风险动作“{rule}”。",
@@ -813,24 +1262,70 @@ class RuleJudge:
             current = item.get("assistant_message", "")
             if previous and current:
                 previous_text, previous_item = previous
-                if current == previous_text or SequenceMatcher(None, current, previous_text).ratio() > 0.88:
+                if is_similar_text(current, previous_text) or SequenceMatcher(None, current, previous_text).ratio() > 0.88:
                     return self._evidence_row(item, current)
             previous = (current, item)
         return None
+
+    def _stalled_followup_evidence(
+        self,
+        messages: List[Dict[str, Any]],
+        task_type: str,
+    ) -> Dict[str, Any] | None:
+        for index in range(1, len(messages)):
+            previous = messages[index - 1]
+            current = messages[index]
+            user = current.get("user_message", "")
+            assistant = current.get("assistant_message", "")
+            previous_assistant = previous.get("assistant_message", "")
+            if not user or not assistant or not self._is_concrete_followup(user, task_type):
+                continue
+            if previous_assistant and is_similar_text(assistant, previous_assistant):
+                return self._evidence_row(current, assistant)
+            if task_type == "course_platform_outbound" and self._has_any(
+                user,
+                ["哪里", "路径", "怎么配置", "第三方", "Web", "看不到", "在哪里选"],
+            ):
+                gives_path = self._has_any(assistant, ["Web 控制台", "第三方系统", "直播平台管理", "勾选", "直接选择"])
+                repeats_difference = self._has_any(assistant, ["标准延迟", "低延迟约", "5-10 秒", "1-2 秒", "发布选项"])
+                if repeats_difference and not gives_path:
+                    return self._evidence_row(current, assistant)
+            if task_type == "rider_outbound" and self._has_any(user, ["记录", "不完成", "没完成", "会怎么样", "影响"]):
+                answers_impact = self._has_any(assistant, ["X 单", "Y 单", "合同", "派单", "影响", "记录"])
+                repeats_safety = self._has_any(assistant, ["安全第一", "能跑再接单"]) and self._has_any(
+                    previous_assistant,
+                    ["安全第一", "能跑再接单"],
+                )
+                if repeats_safety or not answers_impact:
+                    return self._evidence_row(current, assistant)
+        return None
+
+    def _is_concrete_followup(self, user_message: str, task_type: str) -> bool:
+        if task_type == "rider_outbound":
+            return self._has_any(
+                user_message,
+                ["怎么", "多少", "会不会", "会怎么样", "影响", "记录", "退出", "排名", "安全", "天气", "X 单", "Y 单"],
+            )
+        if task_type == "course_platform_outbound":
+            return self._has_any(
+                user_message,
+                ["哪里", "路径", "怎么配置", "第三方", "Web", "费用", "优惠券", "区别", "差多少", "选"],
+            )
+        return self._has_any(user_message, ["怎么", "哪里", "下一步", "为什么"])
 
     def _unanswered_penalty(self, messages: List[Dict[str, Any]]) -> float:
         penalty = 0.0
         for item in messages:
             user_message = item.get("user_message", "")
             assistant_message = item.get("assistant_message", "")
-            if self._has_any(user_message, ["多久", "时效", "进度", "结果"]) and not self._has_any(
+            if self._has_any(user_message, ["多久", "时效", "进度", "结果", "会怎样"]) and not self._has_any(
                 assistant_message,
-                ["工作日", "时效", "反馈", "进度", "处理结果"],
+                ["规则", "影响", "合同", "派单", "稍后", "明天", "费用"],
             ):
                 penalty += 5
-            if self._has_any(user_message, ["能不能", "取消", "补偿", "换", "改"]) and not self._has_any(
+            if self._has_any(user_message, ["能不能", "取消", "退出", "看不到", "区别", "费用"]) and not self._has_any(
                 assistant_message,
-                ["方案", "规则", "确认", "核实", "可变更", "提交"],
+                ["规则", "确认", "App", "配置", "标准直播", "低延迟", "费用", "发布方式"],
             ):
                 penalty += 4
         return min(penalty, 14)
@@ -838,17 +1333,16 @@ class RuleJudge:
     def _risk_phrase_penalty(self, messages: List[Dict[str, Any]]) -> float:
         text = self._assistant_text(messages)
         risk_terms = [
-            "保证退款成功",
-            "一定退款",
-            "无需核实",
-            "保证免费",
-            "私下处理",
-            "过期也能用",
             "一定获得资格",
             "保证报上",
+            "保证资格",
             "强制配送",
+            "必须冒雨",
+            "不跑不行",
             "送优惠券",
             "保证优惠",
+            "承诺折扣",
+            "你必须听完",
         ]
         return 12 if self._has_any(text, risk_terms) else 0
 

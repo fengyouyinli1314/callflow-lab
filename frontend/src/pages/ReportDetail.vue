@@ -3,7 +3,7 @@
     <div class="page-header">
       <div>
         <h1>评测报告 #{{ report.report_id || '-' }}</h1>
-        <p>{{ report.explainability?.overall_reason || '报告加载完成后展示总体评估原因。' }}</p>
+        <p>{{ llmJudgeResult.overall_reason || report.explainability?.overall_reason || '报告加载完成后展示总体评估原因。' }}</p>
       </div>
       <el-button :icon="Back" @click="$router.push('/runs')">返回评测台</el-button>
     </div>
@@ -26,7 +26,16 @@
       </div>
 
       <div class="panel">
-        <div class="panel-title"><h2>关键发现</h2></div>
+        <div class="panel-title"><h2>任务与模型</h2></div>
+        <div class="report-meta-grid">
+          <div><span>任务名称</span><strong>{{ taskName }}</strong></div>
+          <div><span>用例名称</span><strong>{{ caseName }}</strong></div>
+          <div><span>被测模型 provider</span><strong>{{ modelProvider }}</strong></div>
+          <div><span>被测模型名称</span><strong>{{ modelName }}</strong></div>
+        </div>
+        <el-divider />
+        <div class="panel-title slim-title"><h2>LLM 评估结论</h2></div>
+        <p class="llm-reason">{{ llmJudgeResult.overall_reason || '暂无明显扣分原因' }}</p>
         <div v-if="keyFindings.length" class="finding-list">
           <el-tag v-for="item in keyFindings" :key="item" type="info">{{ item }}</el-tag>
         </div>
@@ -37,6 +46,40 @@
         </div>
         <p v-else class="muted">暂无优化建议</p>
       </div>
+    </div>
+
+    <div class="panel report-section">
+      <div class="panel-title"><h2>命中规则与失败规则</h2></div>
+      <p class="active-rules-note">{{ activeRulesExplanation }}</p>
+      <p v-if="currentStage" class="active-rules-note">当前阶段：{{ currentStage }}。未进入的后续流程不参与当前轮扣分。</p>
+      <div class="rule-block">
+        <label>命中规则</label>
+        <div v-if="matchedRules.length" class="finding-list">
+          <el-tag v-for="rule in matchedRules" :key="`matched-${rule}`" type="success">{{ rule }}</el-tag>
+        </div>
+        <p v-else class="muted">暂无命中规则</p>
+      </div>
+      <div class="rule-block">
+        <label>失败规则</label>
+        <div v-if="failedRules.length" class="finding-list failed-rules">
+          <el-tag v-for="rule in failedRules" :key="`failed-${rule}`" type="danger">{{ rule }}</el-tag>
+        </div>
+        <p v-else class="muted">暂无失败规则</p>
+      </div>
+      <div class="rule-block">
+        <label>待完成规则</label>
+        <div v-if="pendingRules.length" class="finding-list">
+          <el-tag v-for="rule in pendingRules" :key="`pending-${rule}`" type="info">{{ rule }}</el-tag>
+        </div>
+        <p v-else class="muted">暂无待完成规则</p>
+      </div>
+      <el-collapse v-if="notApplicableRules.length" class="not-applicable-collapse">
+        <el-collapse-item title="未触发规则" name="not-applicable">
+          <div class="finding-list">
+            <el-tag v-for="rule in notApplicableRules" :key="`not-applicable-${rule}`" type="info">{{ rule }}</el-tag>
+          </div>
+        </el-collapse-item>
+      </el-collapse>
     </div>
 
     <div class="panel report-section">
@@ -66,10 +109,18 @@
 
     <div class="panel report-section">
       <div class="panel-title"><h2>失败案例</h2></div>
-      <div v-if="failedRules.length" class="finding-list failed-rules">
-        <el-tag v-for="rule in failedRules" :key="rule" type="danger">{{ rule }}</el-tag>
-      </div>
       <FailureTable :cases="failureCases" />
+    </div>
+
+    <div class="panel report-section">
+      <div class="panel-title"><h2>证据链</h2></div>
+      <el-empty v-if="!evidenceRows.length" description="暂无明显扣分原因" />
+      <el-table v-else :data="evidenceRows">
+        <el-table-column prop="turnIndex" label="证据轮次" width="100" />
+        <el-table-column prop="userMessage" label="用户发言" min-width="240" show-overflow-tooltip />
+        <el-table-column prop="assistantMessage" label="模型回复" min-width="260" show-overflow-tooltip />
+        <el-table-column prop="rules" label="命中 / 失败规则" min-width="260" show-overflow-tooltip />
+      </el-table>
     </div>
 
     <div class="panel report-section">
@@ -102,6 +153,9 @@ const report = ref({
   failure_cases: [],
   score_formula: {}
 })
+const task = ref({})
+const reportCase = ref({})
+const reportRun = ref({})
 const labels = {
   task_completion: '任务完成度',
   instruction_following: '指令遵循率',
@@ -119,12 +173,37 @@ const grade = computed(() => {
   return { label: '待优化', type: 'danger' }
 })
 
+const llmJudgeResult = computed(() => report.value.llm_judge_result || report.value.llmJudgeResult || {})
+const taskName = computed(() => task.value.name || `任务 #${report.value.task_id || '-'}`)
+const caseName = computed(() => reportCase.value.name || `用例 #${report.value.case_id || '-'}`)
+const firstMessageDetail = computed(() => (report.value.messages || [])[0]?.detail || {})
+const modelProvider = computed(() => reportRun.value.model_provider || firstMessageDetail.value.model_provider || '-')
+const modelName = computed(() => reportRun.value.model_name || firstMessageDetail.value.model_name || modelProvider.value || '-')
 const keyFindings = computed(() => report.value.explainability?.key_findings || [])
 const suggestions = computed(
-  () => Array.from(new Set([...(report.value.suggestions || []), ...(report.value.explainability?.improvement_suggestions || [])]))
+  () =>
+    Array.from(
+      new Set([
+        ...(report.value.suggestions || []),
+        ...(report.value.explainability?.improvement_suggestions || []),
+        ...(llmJudgeResult.value.suggestions || [])
+      ])
+    )
 )
+const matchedRules = computed(() => report.value.matched_rules || report.value.matchedRules || [])
 const failedRules = computed(() => report.value.failed_rules || report.value.failedRules || [])
 const failureCases = computed(() => report.value.failure_cases || report.value.failureCases || [])
+const activeRules = computed(() => report.value.active_rules || report.value.activeRules || report.value.explainability?.active_rules || {})
+const pendingRules = computed(() => report.value.pending_rules || report.value.pendingRules || activeRules.value.pending_rules || activeRules.value.pendingRules || [])
+const currentStage = computed(() => report.value.current_stage || report.value.currentStage || report.value.explainability?.current_stage || '')
+const activeRulesExplanation = computed(
+  () =>
+    report.value.active_rules_explanation ||
+    report.value.activeRulesExplanation ||
+    report.value.explainability?.active_rules_explanation ||
+    '本轮仅对当前流程阶段和用户已触发的问题进行评分，后续流程规则暂不扣分。未进入的后续流程不参与当前轮扣分。'
+)
+const notApplicableRules = computed(() => activeRules.value.not_applicable_rules || activeRules.value.notApplicableRules || [])
 const scoreFormula = computed(() => {
   const formula = report.value.score_formula || report.value.explainability?.score_formula || {}
   return {
@@ -158,6 +237,8 @@ const formulaComponents = computed(() =>
   })
 )
 
+const deductionText = (value) => (value && value !== '暂无扣分原因' ? value : '暂无明显扣分原因')
+
 const metricRows = computed(() => {
   const explanations = report.value.metric_explanations || report.value.metricExplanations || []
   if (Array.isArray(explanations) && explanations.length) {
@@ -167,10 +248,10 @@ const metricRows = computed(() => {
         key: item.metric_key || item.metric_name || index,
         name: item.metric_name || labels[item.metric_key] || item.metric_key || '-',
         score: item.score ?? '-',
-        deduction_reason: item.deduction_reason ?? '暂无扣分原因',
+        deduction_reason: deductionText(item.deduction_reason),
         evidenceTurnsText: evidenceTurns.length ? evidenceTurns.join('、') : '-',
-        evidenceText: item.evidence_text || '-',
-        suggestion: item.suggestion ?? '-'
+        evidenceText: item.evidence_text || '暂无证据',
+        suggestion: item.suggestion ?? '暂无优化建议'
       }
     })
   }
@@ -182,16 +263,49 @@ const metricRows = computed(() => {
       key,
       name: labels[key] || key,
       score: value.score ?? '-',
-      deduction_reason: value.deduction_reason ?? '暂无扣分原因',
+      deduction_reason: deductionText(value.deduction_reason),
       evidenceTurnsText: evidenceTurns.length ? evidenceTurns.join('、') : '-',
-      evidenceText: value.evidence_text || (evidenceSnippets.length ? evidenceSnippets.join(' / ') : '-'),
-      suggestion: value.suggestion ?? '-'
+      evidenceText: value.evidence_text || (evidenceSnippets.length ? evidenceSnippets.join(' / ') : '暂无证据'),
+      suggestion: value.suggestion ?? '暂无优化建议'
     }
   })
 })
 
+const evidenceRows = computed(() => {
+  const rows = (report.value.evidence_messages || []).map((item, index) => ({
+    key: `message-${item.id || index}`,
+    turnIndex: item.turn_index ?? item.turnIndex ?? '-',
+    userMessage: item.user_message || item.userMessage || '-',
+    assistantMessage: item.assistant_message || item.assistantMessage || '-',
+    rules: [
+      ...(item.matched_rules || item.matchedRules || []).map((rule) => `命中：${rule}`),
+      ...(item.missed_rules || item.missedRules || []).map((rule) => `遗漏：${rule}`),
+      ...(item.violated_rules || item.violatedRules || []).map((rule) => `违规：${rule}`)
+    ].join(' / ') || '暂无规则证据'
+  }))
+  const llmEvidence = (llmJudgeResult.value.evidence || []).map((item, index) => ({
+    key: `llm-${index}`,
+    turnIndex: item.turn_index ?? item.turnIndex ?? '-',
+    userMessage: item.issue || 'LLM 评估证据',
+    assistantMessage: item.quote || '-',
+    rules: item.deduction || item.deduction_reason || '暂无明显扣分原因'
+  }))
+  return [...rows, ...llmEvidence]
+})
+
 onMounted(async () => {
-  report.value = await request.get(`/api/reports/${route.params.id}`)
+  const data = await request.get(`/api/reports/${route.params.id}`)
+  report.value = data
+  const [taskResult, caseResult, runResult] = await Promise.allSettled([
+    request.get(`/api/tasks/${data.task_id}`),
+    request.get(`/api/cases?task_id=${data.task_id}`),
+    request.get(`/api/runs/${data.run_id}`)
+  ])
+  if (taskResult.status === 'fulfilled') task.value = taskResult.value
+  if (caseResult.status === 'fulfilled') {
+    reportCase.value = (caseResult.value || []).find((item) => item.id === data.case_id) || {}
+  }
+  if (runResult.status === 'fulfilled') reportRun.value = runResult.value
 })
 </script>
 
@@ -202,6 +316,39 @@ onMounted(async () => {
 
 .report-section {
   margin-top: 16px;
+}
+
+.report-meta-grid {
+  display: grid;
+  gap: 10px;
+}
+
+.report-meta-grid div {
+  display: grid;
+  grid-template-columns: 130px minmax(0, 1fr);
+  gap: 12px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--line);
+}
+
+.report-meta-grid span,
+.rule-block label {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.report-meta-grid strong {
+  color: var(--body-text);
+  font-size: 14px;
+  word-break: break-word;
+}
+
+.slim-title {
+  margin-bottom: 8px;
+}
+
+.llm-reason {
+  margin: 0 0 10px;
 }
 
 .finding-list {
@@ -255,6 +402,19 @@ onMounted(async () => {
 
 .failed-rules {
   margin-bottom: 12px;
+}
+
+.active-rules-note {
+  margin: 0 0 12px;
+  color: var(--muted);
+}
+
+.rule-block + .rule-block {
+  margin-top: 14px;
+}
+
+.not-applicable-collapse {
+  margin-top: 14px;
 }
 
 @media (max-width: 1100px) {

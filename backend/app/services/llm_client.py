@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import re
 from typing import Any, Dict, List
 
 import httpx
@@ -145,41 +144,51 @@ class LLMClient:
         if turn_index <= 1:
             return case_payload.get("initial_message", "你好，我需要处理这个问题。")
 
-        order_hint = "订单号是 MT20260514001。"
-        if "酒店" in scenario:
-            order_hint = "订单号是 HOTEL2026051409，我想改到下周五入住。"
-        if "券" in scenario or "团购" in scenario:
-            order_hint = "券码是 TG20260514088，门店说扫不了。"
+        if any(keyword in scenario for keyword in ["飞毛腿", "骑手", "配送", "派单"]):
+            templates = [
+                "你再确认一下，单日和多日分别要完成多少？",
+                "如果今天跑不了，会不会影响合同和派单？",
+                "那我先看路况，安全第一。",
+            ]
+            return templates[(turn_index - 2) % len(templates)]
+
+        if any(keyword in scenario for keyword in ["课程", "直播", "低延迟", "负责人"]):
+            templates = [
+                "你用一句话说清楚直播发布页升级了什么。",
+                "如果我不是负责人，你希望我怎么转达？",
+                "费用和发布方式有什么差异？",
+            ]
+            return templates[(turn_index - 2) % len(templates)]
 
         if "情绪激动" in profile:
             templates = [
-                f"我已经等很久了，你们到底能不能马上处理？{order_hint}",
-                "我现在很着急，希望你给我一个明确处理时间。",
-                "如果今天解决不了，我需要知道下一步找谁处理。",
+                "我现在比较着急，你先说清楚下一步。",
+                "我希望你给我一个明确答复。",
+                "如果现在不能确认，请告诉我后续怎么联系。",
             ]
         elif "反复追问" in profile:
             templates = [
-                f"你再确认一下，需要我提供哪些信息？{order_hint}",
-                "所以现在到底能不能继续处理？处理时效是多久？",
+                "你再确认一下，需要我配合哪些信息？",
+                "所以现在到底能不能继续推进？",
                 "还有没有其他限制条件需要提前告诉我？",
             ]
         elif "信息缺失" in profile:
             templates = [
-                "我不太记得订单号，你能告诉我还可以怎么查吗？",
-                f"我找到一点信息了，{order_hint}",
+                "我现在信息不太全，你告诉我还需要什么。",
+                "我找到一点信息了，你看够不够。",
                 "这些信息够了吗？还需要补充什么？",
             ]
         elif "需求变更" in profile:
             templates = [
-                f"我刚刚想法变了，想换一种处理方式，{order_hint}",
+                "我刚刚想法变了，想换一种处理方式。",
                 "如果原方案不行，有没有替代方案？",
                 "请你把可选方案和风险说清楚。",
             ]
         else:
             templates = [
-                f"好的，{order_hint}",
-                "请问接下来多久会有结果？",
-                "麻烦你把处理结论和注意事项再说明一下。",
+                "好的，你继续说。",
+                "请问接下来我需要怎么配合？",
+                "麻烦你把结论和注意事项再说明一下。",
             ]
         return templates[(turn_index - 2) % len(templates)]
 
@@ -190,45 +199,28 @@ class LLMClient:
         user_message: str,
         history: List[Dict[str, Any]],
     ) -> str:
-        scenario = task_payload.get("target_scenario", "") + case_payload.get("name", "")
-        order_seen = bool(re.search(r"(订单号|券码|MT\d+|HOTEL\d+|TG\d+)", user_message))
+        scenario = " ".join(
+            [
+                task_payload.get("task_type", ""),
+                task_payload.get("target_scenario", ""),
+                task_payload.get("instruction_text", ""),
+                case_payload.get("name", ""),
+                user_message,
+            ]
+        )
+        if any(keyword in scenario for keyword in ["飞毛腿", "骑手", "配送", "派单"]):
+            if any(keyword in scenario for keyword in ["下雨", "雨天", "天气"]):
+                return "安全第一，雨天单多，能跑有助保资格。"
+            if any(keyword in scenario for keyword in ["没完成", "X 单", "X单", "影响"]):
+                return "单日需完成 X 单，否则合同和派单可能受影响。"
+            return "飞毛腿合同已生效，现在可以开始配送吗？"
 
-        if "退款" in scenario or "外卖" in scenario:
-            if not order_seen and len(history) == 0:
-                return (
-                    "很抱歉给您带来不好的体验，我先帮您核实订单。请提供订单号或下单手机号后四位，"
-                    "我会查看配送超时原因；核实后会提交退款/补偿申请，通常 1-3 个工作日反馈，"
-                    "目前不能直接承诺退款一定成功。"
-                )
-            return (
-                "收到，我已记录您的订单信息，会优先核实骑手配送轨迹、商家出餐时间和超时节点。"
-                "如果符合平台退款规则，会在 1-3 个工作日内给出处理结果；在此期间我会继续安抚并同步进展，"
-                "不会在未核实前直接承诺退款成功。"
-            )
+        if any(keyword in scenario for keyword in ["课程", "直播", "低延迟", "负责人"]):
+            if any(keyword in scenario for keyword in ["不是负责人", "前台", "转达"]):
+                return "麻烦您帮忙转达负责人，直播发布页升级了。"
+            return "请问您是负责人吗？直播发布页升级了。"
 
-        if "酒店" in scenario:
-            if not order_seen and len(history) == 0:
-                return (
-                    "可以帮您核查变更可能性。请先提供订单信息、原入住日期、希望调整的新入住日期和房型，"
-                    "我需要确认酒店库存、房型是否支持变更，并提醒您可能产生差价或按酒店规则收取费用。"
-                )
-            return (
-                "已收到订单和新入住日期。我会核对原订单、目标入住日期、房型库存和酒店变更政策；"
-                "如可变更，会展示差价和确认时限，您确认后再提交变更。"
-            )
-
-        if "券" in scenario or "团购" in scenario:
-            if not order_seen and len(history) == 0:
-                return (
-                    "我先帮您排查团购券无法核销的问题。请提供券码、到店门店名称和提示信息，"
-                    "我会核对券状态、门店适用范围、有效期，并给出下一步处理建议。"
-                )
-            return (
-                "我已记录券码，会继续核对券状态是否已使用/冻结、当前门店是否在适用范围内、"
-                "有效期是否仍然有效。若门店适用但系统异常，我会建议门店重试并为您提交核销异常工单。"
-            )
-
-        return "我会先核实关键信息，再根据规则给出处理方案和预计时效。"
+        return "您好，我按当前外呼任务继续沟通。"
 
     def _safe_json_like(self, content: str, fallback: Dict[str, Any]) -> Dict[str, Any]:
         try:

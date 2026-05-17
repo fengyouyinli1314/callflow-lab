@@ -11,6 +11,15 @@ class Settings(BaseSettings):
     llm_api_key: str = ""
     llm_base_url: str = ""
     llm_model: str = ""
+    target_model_provider: str = "mock_fallback"
+    target_model_api_key: str = ""
+    target_model_base_url: str = ""
+    target_model_name: str = ""
+    target_model_endpoint: str = ""
+    evaluator_provider: str = "mock"
+    evaluator_api_key: str = ""
+    evaluator_base_url: str = ""
+    evaluator_model: str = ""
 
     model_config = SettingsConfigDict(
         env_file=Path(__file__).resolve().parents[2] / ".env",

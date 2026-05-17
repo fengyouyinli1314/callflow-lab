@@ -4,7 +4,7 @@ from sqlalchemy import inspect, text
 from sqlmodel import Session, SQLModel, create_engine
 
 from app.core.config import settings
-from app.models import case, report, run, task  # noqa: F401
+from app.models import batch_run, case, report, run, task  # noqa: F401
 
 
 connect_args = {"check_same_thread": False} if settings.database_url.startswith("sqlite") else {}
@@ -14,6 +14,7 @@ engine = create_engine(settings.database_url, echo=False, connect_args=connect_a
 def create_db_and_tables() -> None:
     SQLModel.metadata.create_all(engine)
     _ensure_task_columns()
+    _ensure_run_columns()
     _ensure_report_columns()
 
 
@@ -59,11 +60,36 @@ def _ensure_report_columns() -> None:
         "metric_explanations": "JSON",
         "evidence_messages": "JSON",
         "score_formula": "JSON",
+        "matched_rules": "JSON",
+        "llm_judge_result": "JSON",
+        "active_rules": "JSON",
+        "pending_rules": "JSON",
+        "current_stage": "VARCHAR(80) DEFAULT ''",
+        "active_rules_explanation": "TEXT DEFAULT ''",
     }
     with engine.begin() as connection:
         for column_name, column_type in required_columns.items():
             if column_name not in existing_columns:
                 connection.execute(text(f"ALTER TABLE evaluation_reports ADD COLUMN {column_name} {column_type}"))
+
+
+def _ensure_run_columns() -> None:
+    if not settings.database_url.startswith("sqlite"):
+        return
+
+    inspector = inspect(engine)
+    if "evaluation_runs" not in inspector.get_table_names():
+        return
+
+    existing_columns = {column["name"] for column in inspector.get_columns("evaluation_runs")}
+    required_columns = {
+        "model_provider": "VARCHAR(80) DEFAULT 'mock_fallback'",
+        "model_name": "VARCHAR(120) DEFAULT 'mock_fallback'",
+    }
+    with engine.begin() as connection:
+        for column_name, column_type in required_columns.items():
+            if column_name not in existing_columns:
+                connection.execute(text(f"ALTER TABLE evaluation_runs ADD COLUMN {column_name} {column_type}"))
 
 
 def get_session() -> Generator[Session, None, None]:

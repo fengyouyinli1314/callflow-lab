@@ -1,5 +1,5 @@
 <template>
-  <el-empty v-if="!rows.length" description="本次评测未触发失败规则" />
+  <el-empty v-if="!rows.length" description="暂无失败规则" />
   <el-table v-else :data="rows">
     <el-table-column prop="ruleName" label="规则" min-width="170" />
     <el-table-column prop="severity" label="级别" width="92">
@@ -22,15 +22,17 @@ const props = defineProps({
   cases: { type: Array, default: () => [] }
 })
 
+const deductionText = (value) => (value && value !== '暂无扣分原因' ? value : '暂无明显扣分原因')
+
 const rows = computed(() =>
   props.cases.map((item) => ({
     ruleName: item.rule_name ?? item.ruleName ?? item.rule ?? item.name ?? '-',
     severity: item.severity ?? 'medium',
     turnIndex: item.turn_index ?? item.turnIndex ?? item.turn ?? '-',
-    evidence: item.evidence ?? item.reason ?? '-',
-    deductionReason: item.deduction_reason ?? item.deductionReason ?? item.reason ?? '-',
+    evidence: item.evidence ?? item.reason ?? '暂无证据',
+    deductionReason: deductionText(item.deduction_reason ?? item.deductionReason ?? item.reason),
     dialogueSnippet: item.dialogue_snippet ?? item.dialogueSnippet ?? item.snippet ?? '',
-    suggestion: item.suggestion ?? item.advice ?? '-'
+    suggestion: item.suggestion ?? item.advice ?? '暂无优化建议'
   }))
 )
 </script>
