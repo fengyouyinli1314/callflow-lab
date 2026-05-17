@@ -20,6 +20,10 @@ class Settings(BaseSettings):
     evaluator_api_key: str = ""
     evaluator_base_url: str = ""
     evaluator_model: str = ""
+    case_generator_provider: str = "mock"
+    case_generator_api_key: str = ""
+    case_generator_base_url: str = ""
+    case_generator_model: str = ""
 
     model_config = SettingsConfigDict(
         env_file=Path(__file__).resolve().parents[2] / ".env",

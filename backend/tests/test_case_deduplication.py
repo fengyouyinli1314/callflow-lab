@@ -86,6 +86,7 @@ def test_deduplicate_cases_endpoint_removes_exact_duplicate_records(client):
         "required_rules": ["必须清理重复"],
         "forbidden_rules": ["禁止误删保留项"],
         "difficulty": "简单",
+        "data_source": "ai_generated",
     }
 
     with Session(engine) as session:

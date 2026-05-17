@@ -5,7 +5,10 @@
         <h1>测试用例</h1>
         <p>维护用户画像、初始问题、期望目标和业务约束规则。</p>
       </div>
-      <el-button type="primary" :icon="Plus" @click="openCreate">新增用例</el-button>
+      <div class="header-actions">
+        <el-button :icon="MagicStick" @click="openGenerate" :disabled="!selectedTask">AI 生成用例</el-button>
+        <el-button type="primary" :icon="Plus" @click="openCreate">新增用例</el-button>
+      </div>
     </div>
 
     <div class="panel">
@@ -64,13 +67,82 @@
         <el-button type="primary" :icon="Check" @click="save">保存</el-button>
       </template>
     </el-dialog>
+
+    <el-dialog v-model="generateDialogVisible" title="AI 生成测试用例" width="980px">
+      <el-form label-position="top">
+        <div class="grid two">
+          <el-form-item label="所属任务">
+            <el-select v-model="generateForm.task_id" style="width: 100%">
+              <el-option v-for="task in tasks" :key="task.id" :label="task.name" :value="task.id" />
+            </el-select>
+          </el-form-item>
+          <el-form-item label="生成数量">
+            <el-input-number v-model="generateForm.case_count" :min="1" :max="20" />
+          </el-form-item>
+        </div>
+        <el-form-item label="难度分布">
+          <el-checkbox-group v-model="generateForm.difficulty_distribution">
+            <el-checkbox-button v-for="item in difficultyOptions" :key="item" :label="item" />
+          </el-checkbox-group>
+        </el-form-item>
+        <el-form-item label="用户行为类型">
+          <el-checkbox-group v-model="generateForm.user_behavior_types">
+            <el-checkbox-button v-for="item in behaviorOptions" :key="item" :label="item" />
+          </el-checkbox-group>
+        </el-form-item>
+      </el-form>
+
+      <el-table
+        v-if="generatedDrafts.length"
+        :data="generatedDrafts"
+        v-loading="generating || savingGenerated"
+        class="draft-table"
+        height="360"
+      >
+        <el-table-column prop="name" label="用例名称" min-width="160" />
+        <el-table-column prop="user_profile" label="用户画像" min-width="150" show-overflow-tooltip />
+        <el-table-column prop="initial_message" label="初始问题" min-width="240" show-overflow-tooltip />
+        <el-table-column prop="difficulty" label="难度" width="82" />
+        <el-table-column prop="max_turns" label="轮数" width="72" />
+        <el-table-column label="期望目标" min-width="240">
+          <template #default="{ row }">
+            <div class="rule-tags">
+              <el-tag v-for="goal in visibleRules(row.expected_goals)" :key="goal" type="info">{{ goal }}</el-tag>
+              <el-tag v-if="hiddenRuleCount(row.expected_goals)" type="info">+{{ hiddenRuleCount(row.expected_goals) }}</el-tag>
+            </div>
+          </template>
+        </el-table-column>
+        <el-table-column label="触发条件" min-width="220">
+          <template #default="{ row }">
+            <div class="rule-tags">
+              <el-tag v-for="condition in visibleRules(row.trigger_conditions)" :key="condition">{{ condition }}</el-tag>
+              <span v-if="!hasRules(row.trigger_conditions)" class="muted">暂无</span>
+            </div>
+          </template>
+        </el-table-column>
+      </el-table>
+
+      <template #footer>
+        <el-button @click="generateDialogVisible = false">取消</el-button>
+        <el-button :icon="MagicStick" :loading="generating" @click="generateDrafts">生成草稿</el-button>
+        <el-button
+          type="primary"
+          :icon="Check"
+          :disabled="!generatedDrafts.length"
+          :loading="savingGenerated"
+          @click="saveGeneratedDrafts"
+        >
+          确认保存
+        </el-button>
+      </template>
+    </el-dialog>
   </section>
 </template>
 
 <script setup>
 import { onMounted, reactive, ref } from 'vue'
 import { ElMessage } from 'element-plus'
-import { Check, Plus } from '@element-plus/icons-vue'
+import { Check, MagicStick, Plus } from '@element-plus/icons-vue'
 import request from '../api/request'
 
 const tasks = ref([])
@@ -78,9 +150,15 @@ const cases = ref([])
 const selectedTask = ref(null)
 const loading = ref(false)
 const dialogVisible = ref(false)
+const generateDialogVisible = ref(false)
+const generating = ref(false)
+const savingGenerated = ref(false)
+const generatedDrafts = ref([])
 const goalsText = ref('')
 const requiredText = ref('')
 const forbiddenText = ref('')
+const difficultyOptions = ['简单', '中等', '困难']
+const behaviorOptions = ['正常配合', '拒绝配合', '情绪不满', '反复追问', '信息缺失', '超范围问题']
 const form = reactive({
   task_id: null,
   name: '',
@@ -88,6 +166,12 @@ const form = reactive({
   initial_message: '',
   max_turns: 4,
   difficulty: '中等'
+})
+const generateForm = reactive({
+  task_id: null,
+  case_count: 6,
+  difficulty_distribution: ['简单', '中等', '困难'],
+  user_behavior_types: ['正常配合', '拒绝配合', '情绪不满', '反复追问', '信息缺失', '超范围问题']
 })
 
 const lines = (text) => text.split('\n').map((item) => item.trim()).filter(Boolean)
@@ -149,6 +233,74 @@ const save = async () => {
   selectedTask.value = form.task_id
   loadCases()
 }
+const openGenerate = () => {
+  if (!selectedTask.value && !tasks.value.length) {
+    ElMessage.warning('请先选择任务')
+    return
+  }
+  Object.assign(generateForm, {
+    task_id: selectedTask.value || tasks.value[0]?.id,
+    case_count: 6,
+    difficulty_distribution: ['简单', '中等', '困难'],
+    user_behavior_types: ['正常配合', '拒绝配合', '情绪不满', '反复追问', '信息缺失', '超范围问题']
+  })
+  generatedDrafts.value = []
+  generateDialogVisible.value = true
+}
+const generateDrafts = async () => {
+  if (!generateForm.task_id) {
+    ElMessage.warning('请选择任务')
+    return
+  }
+  if (!generateForm.difficulty_distribution.length || !generateForm.user_behavior_types.length) {
+    ElMessage.warning('请至少选择一个难度和一种用户行为')
+    return
+  }
+  generating.value = true
+  try {
+    generatedDrafts.value = await request.post('/api/cases/generate', {
+      task_id: generateForm.task_id,
+      case_count: generateForm.case_count,
+      difficulty_distribution: generateForm.difficulty_distribution,
+      user_behavior_types: generateForm.user_behavior_types
+    })
+    ElMessage.success(`已生成 ${generatedDrafts.value.length} 条草稿`)
+  } catch (error) {
+    ElMessage.error(error.message)
+  } finally {
+    generating.value = false
+  }
+}
+const saveGeneratedDrafts = async () => {
+  if (!generatedDrafts.value.length) return
+  savingGenerated.value = true
+  try {
+    for (const draft of generatedDrafts.value) {
+      await request.post('/api/cases', {
+        task_id: generateForm.task_id,
+        name: draft.name,
+        user_profile: draft.user_profile,
+        initial_message: draft.initial_message,
+        max_turns: draft.max_turns,
+        expected_goals: draft.expected_goals || [],
+        required_rules: draft.required_rules || [],
+        forbidden_rules: draft.forbidden_rules || [],
+        difficulty: draft.difficulty || '中等',
+        trigger_conditions: draft.trigger_conditions || [],
+        expected_final_state: draft.expected_final_state || '',
+        data_source: draft.data_source || 'ai_generated'
+      })
+    }
+    ElMessage.success('已确认保存，重复用例会自动复用')
+    generateDialogVisible.value = false
+    selectedTask.value = generateForm.task_id
+    await loadCases()
+  } catch (error) {
+    ElMessage.error(error.message)
+  } finally {
+    savingGenerated.value = false
+  }
+}
 
 onMounted(async () => {
   await loadTasks()
@@ -157,6 +309,16 @@ onMounted(async () => {
 </script>
 
 <style scoped>
+.header-actions {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+}
+
+.draft-table {
+  margin-top: 8px;
+}
+
 .rule-tags {
   display: flex;
   flex-wrap: wrap;

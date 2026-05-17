@@ -1,7 +1,7 @@
 from datetime import datetime
 from typing import List, Optional
 
-from sqlmodel import SQLModel
+from sqlmodel import Field, SQLModel
 
 
 class CaseBase(SQLModel):
@@ -14,6 +14,9 @@ class CaseBase(SQLModel):
     required_rules: List[str] = []
     forbidden_rules: List[str] = []
     difficulty: str = "中等"
+    trigger_conditions: List[str] = []
+    expected_final_state: str = ""
+    data_source: str = "manual"
 
 
 class CaseCreate(CaseBase):
@@ -30,8 +33,34 @@ class CaseUpdate(SQLModel):
     required_rules: Optional[List[str]] = None
     forbidden_rules: Optional[List[str]] = None
     difficulty: Optional[str] = None
+    trigger_conditions: Optional[List[str]] = None
+    expected_final_state: Optional[str] = None
+    data_source: Optional[str] = None
 
 
 class CaseRead(CaseBase):
     id: int
     created_at: datetime
+
+
+class CaseGenerateRequest(SQLModel):
+    task_id: int
+    case_count: int = Field(default=6, ge=1, le=20)
+    difficulty_distribution: List[str] = Field(default_factory=lambda: ["简单", "中等", "困难"])
+    user_behavior_types: List[str] = Field(
+        default_factory=lambda: ["正常配合", "拒绝配合", "情绪不满", "反复追问", "信息缺失", "超范围问题"]
+    )
+
+
+class CaseDraft(SQLModel):
+    name: str
+    user_profile: str
+    initial_message: str
+    expected_goals: List[str] = Field(default_factory=list)
+    required_rules: List[str] = Field(default_factory=list)
+    forbidden_rules: List[str] = Field(default_factory=list)
+    difficulty: str = "中等"
+    max_turns: int = Field(default=4, ge=1, le=12)
+    trigger_conditions: List[str] = Field(default_factory=list)
+    expected_final_state: str = ""
+    data_source: str = "ai_generated"

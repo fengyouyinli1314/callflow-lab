@@ -14,6 +14,7 @@ engine = create_engine(settings.database_url, echo=False, connect_args=connect_a
 def create_db_and_tables() -> None:
     SQLModel.metadata.create_all(engine)
     _ensure_task_columns()
+    _ensure_case_columns()
     _ensure_run_columns()
     _ensure_report_columns()
 
@@ -42,6 +43,29 @@ def _ensure_task_columns() -> None:
         for column_name, column_type in required_columns.items():
             if column_name not in existing_columns:
                 connection.execute(text(f"ALTER TABLE evaluation_tasks ADD COLUMN {column_name} {column_type}"))
+
+
+def _ensure_case_columns() -> None:
+    if not settings.database_url.startswith("sqlite"):
+        return
+
+    inspector = inspect(engine)
+    if "evaluation_cases" not in inspector.get_table_names():
+        return
+
+    existing_columns = {column["name"] for column in inspector.get_columns("evaluation_cases")}
+    required_columns = {
+        "trigger_conditions": "JSON DEFAULT '[]'",
+        "expected_final_state": "TEXT DEFAULT ''",
+        "data_source": "VARCHAR(80) DEFAULT 'manual'",
+    }
+    with engine.begin() as connection:
+        for column_name, column_type in required_columns.items():
+            if column_name not in existing_columns:
+                connection.execute(text(f"ALTER TABLE evaluation_cases ADD COLUMN {column_name} {column_type}"))
+        connection.execute(text("UPDATE evaluation_cases SET trigger_conditions = '[]' WHERE trigger_conditions IS NULL"))
+        connection.execute(text("UPDATE evaluation_cases SET expected_final_state = '' WHERE expected_final_state IS NULL"))
+        connection.execute(text("UPDATE evaluation_cases SET data_source = 'manual' WHERE data_source IS NULL OR data_source = ''"))
 
 
 def _ensure_report_columns() -> None:

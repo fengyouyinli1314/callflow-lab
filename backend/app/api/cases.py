@@ -6,8 +6,9 @@ from sqlmodel import Session, select
 from app.core.database import get_session
 from app.models.case import EvaluationCase
 from app.models.task import EvaluationTask
-from app.schemas.case import CaseCreate, CaseRead, CaseUpdate
+from app.schemas.case import CaseCreate, CaseDraft, CaseGenerateRequest, CaseRead, CaseUpdate
 from app.services.case_registry import deduplicate_cases, existing_case, get_or_create_case, unique_cases
+from app.services.case_generator_service import CaseGeneratorService
 
 
 router = APIRouter(prefix="/api/cases", tags=["cases"])
@@ -40,6 +41,22 @@ def deduplicate_case_records(
     session: Session = Depends(get_session),
 ) -> dict:
     return deduplicate_cases(session, task_id=task_id)
+
+
+@router.post("/generate", response_model=List[CaseDraft])
+def generate_case_drafts(
+    payload: CaseGenerateRequest,
+    session: Session = Depends(get_session),
+) -> List[dict]:
+    task = session.get(EvaluationTask, payload.task_id)
+    if not task:
+        raise HTTPException(status_code=404, detail="task not found")
+    return CaseGeneratorService().generate(
+        task=task,
+        case_count=payload.case_count,
+        difficulty_distribution=payload.difficulty_distribution,
+        user_behavior_types=payload.user_behavior_types,
+    )
 
 
 @router.get("/{case_id}", response_model=CaseRead)
