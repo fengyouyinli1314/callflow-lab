@@ -154,7 +154,7 @@ class CaseGeneratorService:
             "只输出合法 JSON 数组，不要 Markdown。"
             "每个数组元素必须包含字段：name, user_profile, initial_message, expected_goals, "
             "required_rules, forbidden_rules, difficulty, max_turns, trigger_conditions, "
-            "expected_final_state, data_source。"
+            "expected_final_state, user_behavior_type, data_source。"
             "expected_goals、required_rules、forbidden_rules、trigger_conditions 必须是字符串数组。"
             "data_source 固定为 ai_generated。"
             "用例要覆盖这些类型：" + required_types + "。"
@@ -197,6 +197,7 @@ class CaseGeneratorService:
                 "max_turns": 5,
                 "trigger_conditions": ["用户追问区别、延迟、适用场景"],
                 "expected_final_state": "用户理解直播类型差异",
+                "user_behavior_type": "反复追问",
                 "data_source": "ai_generated",
             }
         if task_type == "rider_outbound":
@@ -211,6 +212,7 @@ class CaseGeneratorService:
                 "max_turns": 4,
                 "trigger_conditions": ["用户提到排名、名额、报不上"],
                 "expected_final_state": "用户理解规则或结束咨询",
+                "user_behavior_type": "情绪不满",
                 "data_source": "ai_generated",
             }
         return {
@@ -224,6 +226,7 @@ class CaseGeneratorService:
             "max_turns": 5,
             "trigger_conditions": ["用户追问影响、原因、下一步"],
             "expected_final_state": "用户获得关键信息",
+            "user_behavior_type": "反复追问",
             "data_source": "ai_generated",
         }
 
@@ -274,6 +277,7 @@ class CaseGeneratorService:
             "max_turns": self._max_turns(row.get("max_turns")),
             "trigger_conditions": self._string_list(row.get("trigger_conditions")),
             "expected_final_state": self._text(row.get("expected_final_state"), "用户理解规则或结束咨询"),
+            "user_behavior_type": self._text(row.get("user_behavior_type") or row.get("_behavior_type"), "正常配合"),
             "data_source": "ai_generated",
         }
 

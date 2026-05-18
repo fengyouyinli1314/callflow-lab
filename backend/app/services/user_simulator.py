@@ -346,6 +346,9 @@ class UserSimulator:
             case_payload.get("expected_goals", []),
             case_payload.get("required_rules", []),
             case_payload.get("forbidden_rules", []),
+            case_payload.get("trigger_conditions", []),
+            case_payload.get("expected_final_state", ""),
+            case_payload.get("user_behavior_type", ""),
         )
         if self._has_any(text, ["飞毛腿", "骑手", "配送", "站长"]):
             return "rider_outbound"
@@ -359,6 +362,11 @@ class UserSimulator:
             case_payload.get("user_profile", ""),
             case_payload.get("initial_message", ""),
             case_payload.get("expected_goals", []),
+            case_payload.get("required_rules", []),
+            case_payload.get("forbidden_rules", []),
+            case_payload.get("trigger_conditions", []),
+            case_payload.get("expected_final_state", ""),
+            case_payload.get("user_behavior_type", ""),
         )
         if task_type == "rider_outbound":
             if self._has_any(text, ["退出", "取消", "怎么取消"]):

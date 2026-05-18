@@ -10,12 +10,13 @@ class CaseBase(SQLModel):
     user_profile: str
     initial_message: str
     max_turns: int = 4
-    expected_goals: List[str] = []
-    required_rules: List[str] = []
-    forbidden_rules: List[str] = []
+    expected_goals: List[str] = Field(default_factory=list)
+    required_rules: List[str] = Field(default_factory=list)
+    forbidden_rules: List[str] = Field(default_factory=list)
     difficulty: str = "中等"
-    trigger_conditions: List[str] = []
+    trigger_conditions: List[str] = Field(default_factory=list)
     expected_final_state: str = ""
+    user_behavior_type: str = "正常配合"
     data_source: str = "manual"
 
 
@@ -35,6 +36,7 @@ class CaseUpdate(SQLModel):
     difficulty: Optional[str] = None
     trigger_conditions: Optional[List[str]] = None
     expected_final_state: Optional[str] = None
+    user_behavior_type: Optional[str] = None
     data_source: Optional[str] = None
 
 
@@ -63,4 +65,5 @@ class CaseDraft(SQLModel):
     max_turns: int = Field(default=4, ge=1, le=12)
     trigger_conditions: List[str] = Field(default_factory=list)
     expected_final_state: str = ""
+    user_behavior_type: str = "正常配合"
     data_source: str = "ai_generated"

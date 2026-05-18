@@ -200,7 +200,9 @@ class BatchEvaluationService:
         item_id = item.id
 
         try:
-            result = EvaluationService(self.session).start_evaluation(task.id, case.id, provider, provider)
+            result = EvaluationService(self.session).start_evaluation(task.id, case.id, provider)
+            if result.get("success") is False:
+                raise RuntimeError(result.get("error_message") or "evaluation failed")
             report = self.session.get(EvaluationReport, result["report_id"])
             item.status = "finished"
             item.run_id = result["run_id"]

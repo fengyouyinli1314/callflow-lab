@@ -9,9 +9,13 @@ def test_start_evaluation_and_get_messages(client):
     response = client.post("/api/runs/start", json={"task_id": task["id"], "case_id": case["id"]})
     assert response.status_code == 200
     result = response.json()
+    assert result["success"] is True
     assert result["run_id"] > 0
     assert result["report_id"] > 0
     assert result["total_score"] > 0
+    assert result["provider_requested"] == "mock_fallback"
+    assert result["provider_used"] == "mock_fallback"
+    assert result["fallback_used"] is False
 
     messages = client.get(f"/api/runs/{result['run_id']}/messages")
     assert messages.status_code == 200

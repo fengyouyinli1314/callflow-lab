@@ -1,3 +1,7 @@
+from app.core.config import settings
+from app.services.target_model_client import TargetModelClient, TargetModelError
+
+
 def test_list_model_providers_hides_api_key(client):
     response = client.get("/api/model-providers")
     assert response.status_code == 200
@@ -13,7 +17,31 @@ def test_mock_fallback_provider_connection_test(client):
     assert response.status_code == 200
     result = response.json()
     assert result["ok"] is True
+    assert result["success"] is True
     assert result["provider"] == "mock_fallback"
+
+
+def test_mock_fallback_model_name_stays_fallback():
+    settings.target_model_name = "qwen-plus"
+    client = TargetModelClient("mock_fallback")
+    assert client.model_info()["model_name"] == "mock_fallback"
+
+
+def test_openai_compatible_model_name_comes_from_env():
+    settings.target_model_name = "qwen-plus"
+    client = TargetModelClient("openai_compatible", "wrong-model")
+    assert client.model_info()["model_name"] == "qwen-plus"
+
+
+def test_openai_compatible_missing_config_raises_without_fallback():
+    settings.target_model_allow_fallback = False
+    client = TargetModelClient("openai_compatible")
+    try:
+        client.generate_reply({"task_type": "generic_outbound"}, {"name": "case"}, "你好", [])
+    except TargetModelError as exc:
+        assert exc.code == "missing_target_model_api_key"
+    else:
+        raise AssertionError("expected TargetModelError")
 
 
 def test_legacy_mock_provider_maps_to_fallback(client):
@@ -21,4 +49,5 @@ def test_legacy_mock_provider_maps_to_fallback(client):
     assert response.status_code == 200
     result = response.json()
     assert result["ok"] is True
+    assert result["success"] is True
     assert result["provider"] == "mock_fallback"

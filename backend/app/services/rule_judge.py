@@ -578,6 +578,9 @@ class RuleJudge:
             case_payload.get("user_profile", ""),
             case_payload.get("initial_message", ""),
             case_payload.get("expected_goals", []),
+            case_payload.get("trigger_conditions", []),
+            case_payload.get("expected_final_state", ""),
+            case_payload.get("user_behavior_type", ""),
             [item.get("user_message", "") for item in messages],
             user_intents,
             user_states,
@@ -599,6 +602,9 @@ class RuleJudge:
             case_payload.get("user_profile", ""),
             case_payload.get("initial_message", ""),
             case_payload.get("expected_goals", []),
+            case_payload.get("trigger_conditions", []),
+            case_payload.get("expected_final_state", ""),
+            case_payload.get("user_behavior_type", ""),
         )
         required: List[str] = []
         forbidden: List[str] = []

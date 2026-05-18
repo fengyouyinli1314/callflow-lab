@@ -57,6 +57,7 @@ def _ensure_case_columns() -> None:
     required_columns = {
         "trigger_conditions": "JSON DEFAULT '[]'",
         "expected_final_state": "TEXT DEFAULT ''",
+        "user_behavior_type": "VARCHAR(80) DEFAULT '正常配合'",
         "data_source": "VARCHAR(80) DEFAULT 'manual'",
     }
     with engine.begin() as connection:
@@ -65,6 +66,7 @@ def _ensure_case_columns() -> None:
                 connection.execute(text(f"ALTER TABLE evaluation_cases ADD COLUMN {column_name} {column_type}"))
         connection.execute(text("UPDATE evaluation_cases SET trigger_conditions = '[]' WHERE trigger_conditions IS NULL"))
         connection.execute(text("UPDATE evaluation_cases SET expected_final_state = '' WHERE expected_final_state IS NULL"))
+        connection.execute(text("UPDATE evaluation_cases SET user_behavior_type = '正常配合' WHERE user_behavior_type IS NULL OR user_behavior_type = ''"))
         connection.execute(text("UPDATE evaluation_cases SET data_source = 'manual' WHERE data_source IS NULL OR data_source = ''"))
 
 

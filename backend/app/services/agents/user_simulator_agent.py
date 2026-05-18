@@ -347,6 +347,9 @@ class UserSimulatorAgent:
             case_payload.get("expected_goals", []),
             case_payload.get("required_rules", []),
             case_payload.get("forbidden_rules", []),
+            case_payload.get("trigger_conditions", []),
+            case_payload.get("expected_final_state", ""),
+            case_payload.get("user_behavior_type", ""),
         )
         if task_type == "rider_outbound":
             if self._has_any(text, ["退出", "取消", "怎么取消"]):

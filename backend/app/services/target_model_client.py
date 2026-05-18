@@ -7,6 +7,8 @@ import urllib.request
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Tuple
 
+from openai import OpenAI
+
 from app.core.config import settings
 from app.services.dialogue_state import analyze_dialogue_state, is_similar_text
 
@@ -37,6 +39,13 @@ class TargetModelResult:
     should_close: bool = False
     dialogue_state: Dict[str, Any] = field(default_factory=dict)
     call_chain: List[str] = field(default_factory=list)
+
+
+class TargetModelError(Exception):
+    def __init__(self, code: str, message: str) -> None:
+        self.code = code
+        self.message = message
+        super().__init__(message)
 
 
 class TargetModelClient:
@@ -83,10 +92,16 @@ class TargetModelClient:
     def __init__(self, provider: str | None = None, model_name: str | None = None) -> None:
         self.provider = normalize_target_provider(provider or settings.target_model_provider)
         normalized_model_name = LEGACY_PROVIDER_ALIASES.get((model_name or "").strip(), (model_name or "").strip())
-        self.model_name = (normalized_model_name or settings.target_model_name or self.provider).strip() or self.provider
+        if self.provider == "mock_fallback":
+            self.model_name = "mock_fallback"
+        elif self.provider == "openai_compatible":
+            self.model_name = (settings.target_model_name or "").strip()
+        else:
+            self.model_name = (normalized_model_name or settings.target_model_name or self.provider).strip() or self.provider
         self.api_key = settings.target_model_api_key or ""
         self.base_url = (settings.target_model_base_url or "").rstrip("/")
         self.endpoint = settings.target_model_endpoint or ""
+        self.allow_fallback = bool(settings.target_model_allow_fallback)
 
     def generate_reply(
         self,
@@ -292,11 +307,22 @@ class TargetModelClient:
         return text, self._provider_fallback(provider), should_close
 
     def validate_reply_by_task_type(self, content: str, task_type: str) -> str:
-        if task_type == "rider_outbound" and self._has_any(content, self.rider_forbidden_terms):
+        normalized = self._normalize_reply_text(content, task_type)
+        if task_type == "rider_outbound" and self._has_any(normalized, self.rider_forbidden_terms):
             return "单日需完成 X 单，否则合同和派单可能受影响。"
-        if task_type == "course_platform_outbound" and self._has_any(content, self.course_forbidden_terms):
+        if task_type == "course_platform_outbound" and self._has_any(normalized, self.course_forbidden_terms):
             return "麻烦您帮忙转达负责人，直播发布页升级了。"
-        return content
+        return normalized
+
+    def _normalize_reply_text(self, content: str, task_type: str) -> str:
+        if task_type != "course_platform_outbound":
+            return content
+        return (
+            content.replace("5-10秒", "5-10 秒")
+            .replace("5 - 10 秒", "5-10 秒")
+            .replace("1-2秒", "1-2 秒")
+            .replace("1 - 2 秒", "1-2 秒")
+        )
 
     def deduplicate_assistant_reply(
         self,
@@ -350,8 +376,14 @@ class TargetModelClient:
         messages: List[Dict[str, Any]],
         provider: str,
     ) -> str:
-        if provider == "openai_compatible" and self.api_key and self.base_url:
-            return self._call_openai_compatible(task_payload, case_payload, messages)
+        if provider == "openai_compatible":
+            try:
+                return self._call_openai_compatible(task_payload, case_payload, messages)
+            except TargetModelError:
+                if not self.allow_fallback:
+                    raise
+                logger.exception("openai_compatible target model failed; falling back to mock because fallback is allowed")
+                return ""
         if provider == "custom_endpoint" and self.endpoint:
             return self._call_custom_endpoint(task_payload, case_payload, messages)
         return ""
@@ -442,16 +474,67 @@ class TargetModelClient:
         case_payload: Dict[str, Any],
         messages: List[Dict[str, Any]],
     ) -> str:
-        url = self.base_url
-        if not url.endswith("/chat/completions"):
-            url = f"{url}/chat/completions"
-        payload = {
-            "model": self.model_name,
-            "messages": self._messages(task_payload, case_payload, messages),
-            "temperature": 0.1,
+        return self._call_openai_chat(
+            messages=self._messages(task_payload, case_payload, messages),
+            temperature=0.1,
+        )
+
+    def test_openai_compatible_connection(self) -> Dict[str, Any]:
+        content = self._call_openai_chat(
+            messages=[{"role": "user", "content": "请只回复 OK"}],
+            temperature=0,
+        )
+        return {
+            "success": True,
+            "ok": True,
+            "provider": "openai_compatible",
+            "model_name": self.model_name,
+            "reply_length": len(content),
+            "message": "openai_compatible provider_call_success=true",
         }
-        headers = {"Content-Type": "application/json", "Authorization": f"Bearer {self.api_key}"}
-        return self._post_json(url, payload, headers)
+
+    def _call_openai_chat(self, messages: List[Dict[str, str]], temperature: float) -> str:
+        if not self.api_key:
+            raise TargetModelError("missing_target_model_api_key", "TARGET_MODEL_API_KEY is not configured")
+        if not self.base_url:
+            raise TargetModelError("missing_target_model_base_url", "TARGET_MODEL_BASE_URL is not configured")
+        if not self.model_name:
+            raise TargetModelError("missing_target_model_name", "TARGET_MODEL_NAME is not configured")
+
+        logger.info(
+            "target_model_openai_call provider=openai_compatible api_key_configured=%s base_url=%s model_name=%s timeout=60",
+            "true" if self.api_key else "false",
+            "已配置",
+            self.model_name,
+        )
+        try:
+            client = OpenAI(
+                api_key=self.api_key,
+                base_url=self.base_url,
+                timeout=60.0,
+            )
+            response = client.chat.completions.create(
+                model=self.model_name,
+                messages=messages,
+                temperature=temperature,
+            )
+        except Exception as exc:
+            logger.exception("target_model_openai_call provider=openai_compatible provider_call_success=false")
+            raise TargetModelError("openai_compatible_call_failed", str(exc)) from exc
+
+        content = ""
+        try:
+            content = response.choices[0].message.content or ""
+        except (AttributeError, IndexError, TypeError) as exc:
+            raise TargetModelError("empty_model_response", "empty_model_response") from exc
+        content = str(content).strip()
+        if not content:
+            raise TargetModelError("empty_model_response", "empty_model_response")
+        logger.info(
+            "target_model_openai_call provider=openai_compatible provider_call_success=true reply_length=%s",
+            len(content),
+        )
+        return content
 
     def _call_custom_endpoint(
         self,

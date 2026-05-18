@@ -1,3 +1,6 @@
+from app.core.config import settings
+
+
 def _default_tasks(client, limit=2):
     tasks = client.get("/api/tasks").json()
     selected = [task for task in tasks if task.get("task_type") in {"rider_outbound", "course_platform_outbound"}]
@@ -31,6 +34,7 @@ def test_single_model_batch_run_generates_reports(client):
 
 
 def test_multi_model_batch_run_returns_model_summary(client):
+    settings.target_model_allow_fallback = True
     task = _default_tasks(client, 1)[0]
     case = client.get(f"/api/cases?task_id={task['id']}").json()[0]
     payload = {

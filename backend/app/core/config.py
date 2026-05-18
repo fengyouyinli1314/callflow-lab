@@ -16,6 +16,7 @@ class Settings(BaseSettings):
     target_model_base_url: str = ""
     target_model_name: str = ""
     target_model_endpoint: str = ""
+    target_model_allow_fallback: bool = False
     evaluator_provider: str = "mock"
     evaluator_api_key: str = ""
     evaluator_base_url: str = ""

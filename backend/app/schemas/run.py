@@ -12,13 +12,19 @@ class RunStartRequest(SQLModel):
 
 
 class RunStartResponse(SQLModel):
-    run_id: int
-    report_id: int
-    total_score: float
+    success: bool = True
+    run_id: int | None = None
+    report_id: int | None = None
+    total_score: float = 0
+    provider_requested: str = "mock_fallback"
+    provider_used: str = "mock_fallback"
+    fallback_used: bool = False
     model_provider: str = "mock_fallback"
     model_name: str = "mock_fallback"
     task_type: str = "generic_outbound"
     message: str = "evaluation finished"
+    error_code: str | None = None
+    error_message: str | None = None
 
 
 class RunRead(SQLModel):

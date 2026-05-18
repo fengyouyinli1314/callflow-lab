@@ -41,32 +41,23 @@
             </div>
           </template>
         </el-table-column>
+        <el-table-column prop="user_behavior_type" label="行为类型" width="110" />
+        <el-table-column label="操作" width="150" fixed="right">
+          <template #default="{ row }">
+            <el-button :icon="Edit" text type="primary" @click="openEdit(row)">编辑</el-button>
+            <el-button :icon="Delete" text type="danger" @click="deleteCase(row)">删除</el-button>
+          </template>
+        </el-table-column>
       </el-table>
     </div>
 
-    <el-dialog v-model="dialogVisible" title="新增测试用例" width="760px">
-      <el-form label-position="top">
-        <el-form-item label="所属任务">
-          <el-select v-model="form.task_id" style="width: 100%">
-            <el-option v-for="task in tasks" :key="task.id" :label="task.name" :value="task.id" />
-          </el-select>
-        </el-form-item>
-        <el-form-item label="用例名称"><el-input v-model="form.name" /></el-form-item>
-        <el-form-item label="用户画像"><el-input v-model="form.user_profile" type="textarea" :rows="2" /></el-form-item>
-        <el-form-item label="初始问题"><el-input v-model="form.initial_message" type="textarea" :rows="2" /></el-form-item>
-        <div class="grid two">
-          <el-form-item label="最大轮数"><el-input-number v-model="form.max_turns" :min="1" :max="12" /></el-form-item>
-          <el-form-item label="难度"><el-select v-model="form.difficulty"><el-option label="简单" value="简单" /><el-option label="中等" value="中等" /><el-option label="困难" value="困难" /></el-select></el-form-item>
-        </div>
-        <el-form-item label="期望目标"><el-input v-model="goalsText" type="textarea" :rows="3" /></el-form-item>
-        <el-form-item label="必须满足规则"><el-input v-model="requiredText" type="textarea" :rows="3" /></el-form-item>
-        <el-form-item label="禁止触发规则"><el-input v-model="forbiddenText" type="textarea" :rows="3" /></el-form-item>
-      </el-form>
-      <template #footer>
-        <el-button @click="dialogVisible = false">取消</el-button>
-        <el-button type="primary" :icon="Check" @click="save">保存</el-button>
-      </template>
-    </el-dialog>
+    <CaseEditor
+      v-model="editorVisible"
+      :tasks="tasks"
+      :case-data="editingCase"
+      :default-task-id="selectedTask"
+      @saved="handleEditorSaved"
+    />
 
     <el-dialog v-model="generateDialogVisible" title="AI 生成测试用例" width="980px">
       <el-form label-position="top">
@@ -141,32 +132,23 @@
 
 <script setup>
 import { onMounted, reactive, ref } from 'vue'
-import { ElMessage } from 'element-plus'
-import { Check, MagicStick, Plus } from '@element-plus/icons-vue'
+import { ElMessage, ElMessageBox } from 'element-plus'
+import { Check, Delete, Edit, MagicStick, Plus } from '@element-plus/icons-vue'
 import request from '../api/request'
+import CaseEditor from '../components/CaseEditor.vue'
 
 const tasks = ref([])
 const cases = ref([])
 const selectedTask = ref(null)
 const loading = ref(false)
-const dialogVisible = ref(false)
+const editorVisible = ref(false)
+const editingCase = ref(null)
 const generateDialogVisible = ref(false)
 const generating = ref(false)
 const savingGenerated = ref(false)
 const generatedDrafts = ref([])
-const goalsText = ref('')
-const requiredText = ref('')
-const forbiddenText = ref('')
 const difficultyOptions = ['简单', '中等', '困难']
 const behaviorOptions = ['正常配合', '拒绝配合', '情绪不满', '反复追问', '信息缺失', '超范围问题']
-const form = reactive({
-  task_id: null,
-  name: '',
-  user_profile: '',
-  initial_message: '',
-  max_turns: 4,
-  difficulty: '中等'
-})
 const generateForm = reactive({
   task_id: null,
   case_count: 6,
@@ -174,7 +156,6 @@ const generateForm = reactive({
   user_behavior_types: ['正常配合', '拒绝配合', '情绪不满', '反复追问', '信息缺失', '超范围问题']
 })
 
-const lines = (text) => text.split('\n').map((item) => item.trim()).filter(Boolean)
 const visibleRules = (rules = []) => (Array.isArray(rules) ? rules.slice(0, 2) : [])
 const hiddenRuleCount = (rules = []) => (Array.isArray(rules) && rules.length > 2 ? rules.length - 2 : 0)
 const hasRules = (rules = []) => Array.isArray(rules) && rules.length > 0
@@ -215,23 +196,32 @@ const loadCases = async () => {
   }
 }
 const openCreate = () => {
-  Object.assign(form, { task_id: selectedTask.value || tasks.value[0]?.id, name: '', user_profile: '', initial_message: '', max_turns: 4, difficulty: '中等' })
-  goalsText.value = ''
-  requiredText.value = ''
-  forbiddenText.value = ''
-  dialogVisible.value = true
+  editingCase.value = null
+  editorVisible.value = true
 }
-const save = async () => {
-  await request.post('/api/cases', {
-    ...form,
-    expected_goals: lines(goalsText.value),
-    required_rules: lines(requiredText.value),
-    forbidden_rules: lines(forbiddenText.value)
-  })
-  ElMessage.success('已保存')
-  dialogVisible.value = false
-  selectedTask.value = form.task_id
-  loadCases()
+const openEdit = (row) => {
+  editingCase.value = { ...row }
+  editorVisible.value = true
+}
+const handleEditorSaved = async (payload) => {
+  selectedTask.value = payload.task_id
+  await loadCases()
+}
+const deleteCase = async (row) => {
+  try {
+    await ElMessageBox.confirm(`确认删除用例“${row.name}”？`, '删除测试用例', {
+      type: 'warning',
+      confirmButtonText: '删除',
+      cancelButtonText: '取消'
+    })
+    await request.delete(`/api/cases/${row.id}`)
+    ElMessage.success('用例已删除')
+    await loadCases()
+  } catch (error) {
+    if (error !== 'cancel' && error !== 'close') {
+      ElMessage.error(error.message || '删除失败')
+    }
+  }
 }
 const openGenerate = () => {
   if (!selectedTask.value && !tasks.value.length) {
@@ -288,6 +278,7 @@ const saveGeneratedDrafts = async () => {
         difficulty: draft.difficulty || '中等',
         trigger_conditions: draft.trigger_conditions || [],
         expected_final_state: draft.expected_final_state || '',
+        user_behavior_type: draft.user_behavior_type || '正常配合',
         data_source: draft.data_source || 'ai_generated'
       })
     }

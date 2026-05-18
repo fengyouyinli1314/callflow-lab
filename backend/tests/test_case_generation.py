@@ -53,6 +53,7 @@ def test_generated_case_draft_can_be_saved_idempotently(client):
         "difficulty": draft["difficulty"],
         "trigger_conditions": draft["trigger_conditions"],
         "expected_final_state": draft["expected_final_state"],
+        "user_behavior_type": draft["user_behavior_type"],
         "data_source": draft["data_source"],
     }
 
@@ -71,3 +72,4 @@ def test_generated_case_draft_can_be_saved_idempotently(client):
     ]
     assert len(matches) == 1
     assert matches[0]["data_source"] == "ai_generated"
+    assert matches[0]["user_behavior_type"] == payload["user_behavior_type"]

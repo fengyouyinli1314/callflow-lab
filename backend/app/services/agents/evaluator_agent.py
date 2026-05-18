@@ -179,6 +179,9 @@ class EvaluatorAgent:
                 "expected_goals": case_payload.get("expected_goals", []),
                 "required_rules": case_payload.get("required_rules", []),
                 "forbidden_rules": case_payload.get("forbidden_rules", []),
+                "trigger_conditions": case_payload.get("trigger_conditions", []),
+                "expected_final_state": case_payload.get("expected_final_state", ""),
+                "user_behavior_type": case_payload.get("user_behavior_type", ""),
             },
             "full_messages": [
                 {

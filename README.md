@@ -1,16 +1,24 @@
 # callflow-lab
 
-callflow-lab 是面向复杂指令下多轮对话场景的评测系统，适用于客服、人工外呼、业务助手等场景的自动化评测演示。系统通过任务配置、测试用例、用户模拟器、被测模型模拟器、规则评分、模型评分和可解释报告，完成“任务列表 → 用例选择 → 开始评测 → 多轮对话 → 自动评分 → 查看报告”的闭环。
+callflow-lab 是“复杂外呼任务对话模型自动评测平台”。它不是实际外呼系统，也不是训练对话模型的平台；系统目标是评测已有对话模型在复杂外呼任务指令下的表现。
+
+当前默认评测数据来自脱敏任务指令，主要包含两个任务：
+
+- 飞毛腿骑手合同生效外呼评测
+- 课程直播产品升级外呼评测
+
+系统通过任务导入、测试用例管理、用户模拟器 Agent、被测模型接入、规则评分、LLM-as-a-Judge 和可解释报告，完成“任务列表 -> 用例构建 -> 开始评测 -> 多轮对话 -> 自动评分 -> 查看报告”的闭环。
 
 ## 核心功能
 
-- 评测任务管理：维护目标场景、复杂系统指令和评测目标。
-- 测试用例管理：配置用户画像、初始问题、最大轮数、期望目标、必须规则和禁止规则。
-- 用户模拟器：支持普通用户、情绪激动用户、反复追问用户、信息缺失用户、需求变更用户。
-- 自动多轮评测：自动生成用户发言、调用被测模型 mock、保存每轮对话、记录响应时间。
-- 双评分机制：规则评分与模型评分接口并行预留，默认使用 mock，保证离线演示稳定。
-- 可解释报告：输出总分、五项指标、失败规则、失败案例、证据轮次、对话片段和优化建议。
-- 数据大屏：展示评测次数、平均分、平均响应时间、失败规则 TOP5 和最近得分趋势。
+- 评测任务管理：维护复杂外呼任务指令、角色要求、流程规则和评测目标。
+- 测试用例管理：支持预置用例、手动新增/编辑/删除，以及 AI 生成草稿后人工确认保存。
+- 用户模拟器 Agent：根据任务指令、用户画像、对话历史和上一轮回复动态生成被外呼对象发言。
+- 被测模型接入：支持 `mock_fallback`、`openai_compatible` 和 `custom_endpoint`，历史 `mock_baseline` / `mock_strong` 会兼容映射到 `mock_fallback`。
+- 混合评分：硬规则评分和 LLM-as-a-Judge 共同生成六项指标分、总分、证据和建议。
+- 可解释报告：展示总分、各指标分、命中规则、失败规则、证据轮次、对话片段、扣分原因和优化建议。
+- 批量评测：按任务、用例、模型 provider 和重复次数生成多份 run/report 并汇总统计。
+- 数据大屏：展示任务、用例、评测次数、平均分、失败规则 TOP5、趋势和 AI 能力模块。
 
 ## 技术栈
 
@@ -33,7 +41,7 @@ Swagger 地址：
 http://127.0.0.1:8080/docs
 ```
 
-系统启动时会自动初始化演示数据，默认至少包含 3 个评测任务和 9 个测试用例。
+后端启动时会自动初始化演示数据；如果 Excel 指令文件不存在，会使用当前外呼任务 fallback 数据，不再使用旧客服样例。
 
 ## 前端启动
 
@@ -51,33 +59,68 @@ http://127.0.0.1:5173
 
 前端默认后端地址配置在 `frontend/src/api/request.js`，默认值为 `http://127.0.0.1:8080`。如需调整，可设置 `VITE_API_BASE_URL`。
 
-## 真实模型接口预留
+## 模型与 AI 能力配置
 
-默认使用 mock 模式，无需外部模型服务即可完成比赛演示。需要接入 OpenAI compatible API 时，在 `backend/.env` 中配置：
+`mock_fallback` 只用于无 API Key 或演示环境不可用时兜底跑通流程，不代表真实 AI 能力。
+
+被测模型 provider：
 
 ```env
-LLM_PROVIDER=openai_compatible
-LLM_API_KEY=your_api_key
-LLM_BASE_URL=https://your-model-endpoint/v1
-LLM_MODEL=your-model-name
+TARGET_MODEL_PROVIDER=mock_fallback
+TARGET_MODEL_API_KEY=
+TARGET_MODEL_BASE_URL=
+TARGET_MODEL_NAME=
+TARGET_MODEL_ENDPOINT=
+TARGET_MODEL_ALLOW_FALLBACK=false
 ```
 
-如果未配置 API Key 或接口调用失败，系统会自动回退到 mock 模式。
+`openai_compatible` 调用使用 OpenAI SDK，读取 `TARGET_MODEL_API_KEY`、`TARGET_MODEL_BASE_URL`、`TARGET_MODEL_NAME`。真实 API 调试阶段建议保持 `TARGET_MODEL_ALLOW_FALLBACK=false`，失败时直接返回错误，避免静默回退。
+
+用户模拟器 openai-compatible 配置：
+
+```env
+LLM_PROVIDER=mock
+LLM_API_KEY=
+LLM_BASE_URL=
+LLM_MODEL=
+```
+
+LLM-as-a-Judge 配置：
+
+```env
+EVALUATOR_PROVIDER=mock
+EVALUATOR_API_KEY=
+EVALUATOR_BASE_URL=
+EVALUATOR_MODEL=
+```
+
+AI 测试用例生成配置：
+
+```env
+CASE_GENERATOR_PROVIDER=mock
+CASE_GENERATOR_API_KEY=
+CASE_GENERATOR_BASE_URL=
+CASE_GENERATOR_MODEL=
+```
+
+未配置 API Key 或接口失败时，对应模块会自动回退到 mock 兜底。
 
 ## 演示流程
 
-1. 打开数据大屏，查看任务、用例、评测次数和质量概览。
-2. 进入评测任务，查看外卖退款、酒店订单变更、团购券核销三类任务。
-3. 进入测试用例，筛选任务对应的用户画像和规则约束。
-4. 进入开始评测，选择任务与用例，点击“开始评测”。
-5. 查看多轮对话、轮次评分、规则命中情况和失败规则。
-6. 点击“查看报告”，查看总分、雷达图、指标解释、失败案例、证据片段和优化建议。
+1. 打开数据大屏，查看任务、用例、评测次数、质量概览和 AI 能力模块。
+2. 进入评测任务，查看飞毛腿骑手合同生效和课程直播产品升级两类脱敏外呼任务。
+3. 进入测试用例，手动新增/编辑/删除用例，或选择任务后 AI 生成草稿并确认保存。
+4. 进入模型配置，确认只展示 `mock_fallback`、`openai_compatible`、`custom_endpoint`，且 API Key 不明文展示。
+5. 进入开始评测，选择任务、用例和模型 provider，点击“开始评测”。
+6. 查看多轮对话、轮次评分、规则命中情况和失败规则。
+7. 点击“查看报告”，查看总分、六项指标、规则评分、LLM 评估、证据片段和优化建议。
 
 ## 常用示例请求
 
 ```bash
 curl http://127.0.0.1:8080/api/tasks
 curl "http://127.0.0.1:8080/api/cases?task_id=1"
-curl -X POST http://127.0.0.1:8080/api/runs/start -H "Content-Type: application/json" -d "{\"task_id\":1,\"case_id\":1}"
+curl -X POST http://127.0.0.1:8080/api/cases/generate -H "Content-Type: application/json" -d "{\"task_id\":1,\"case_count\":6,\"difficulty_distribution\":[\"简单\",\"中等\",\"困难\"],\"user_behavior_types\":[\"正常配合\",\"拒绝配合\",\"情绪不满\",\"反复追问\",\"信息缺失\",\"超范围问题\"]}"
+curl -X POST http://127.0.0.1:8080/api/runs/start -H "Content-Type: application/json" -d "{\"task_id\":1,\"case_id\":1,\"model_provider\":\"mock_fallback\"}"
 curl http://127.0.0.1:8080/api/dashboard/summary
 ```

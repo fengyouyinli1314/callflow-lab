@@ -14,7 +14,7 @@ from app.models.task import EvaluationTask
 from app.services.agents.evaluator_agent import EvaluatorAgent
 from app.services.report_service import ReportService
 from app.services.rule_judge import RuleJudge
-from app.services.target_model_client import TargetModelClient
+from app.services.target_model_client import TargetModelClient, TargetModelError, normalize_target_provider
 from app.services.user_simulator import UserSimulator
 
 
@@ -45,6 +45,7 @@ class EvaluationService:
 
         self.target_model = TargetModelClient(model_provider, model_name)
         model_info = self.target_model.model_info()
+        provider_requested = normalize_target_provider(model_provider) if model_provider else model_info["model_provider"]
         run = EvaluationRun(
             task_id=task_id,
             case_id=case_id,
@@ -66,6 +67,7 @@ class EvaluationService:
             task_type,
         )
         history: list[dict[str, Any]] = []
+        fallback_used = False
 
         for turn_index in range(1, case.max_turns + 1):
             user_turn = self._normalize_user_turn(
@@ -74,8 +76,37 @@ class EvaluationService:
             )
             user_message = user_turn["content"]
             started = time.perf_counter()
-            target_result = self.target_model.generate_reply(task_payload, case_payload, user_message, history)
+            try:
+                target_result = self.target_model.generate_reply(task_payload, case_payload, user_message, history)
+            except TargetModelError as exc:
+                run.status = "failed"
+                run.finished_at = datetime.utcnow()
+                self.session.add(run)
+                self.session.commit()
+                logger.error(
+                    "evaluation failed target model error run_id=%s provider_requested=%s provider_used=%s error_code=%s",
+                    run.id,
+                    provider_requested,
+                    model_info["model_provider"],
+                    exc.code,
+                )
+                return {
+                    "success": False,
+                    "run_id": run.id,
+                    "report_id": None,
+                    "total_score": 0,
+                    "provider_requested": provider_requested,
+                    "provider_used": model_info["model_provider"],
+                    "fallback_used": False,
+                    "model_provider": run.model_provider,
+                    "model_name": run.model_name,
+                    "task_type": task_type,
+                    "message": "evaluation failed",
+                    "error_code": exc.code,
+                    "error_message": exc.message,
+                }
             assistant_message = target_result.content
+            fallback_used = fallback_used or bool(target_result.fallback_used)
             latency_ms = round((time.perf_counter() - started) * 1000 + 120 + turn_index * 17, 2)
 
             turn_history = history + [
@@ -165,13 +196,19 @@ class EvaluationService:
         self.session.refresh(run)
 
         return {
+            "success": True,
             "run_id": run.id,
             "report_id": report.report_id,
             "total_score": report.total_score,
+            "provider_requested": provider_requested,
+            "provider_used": run.model_provider,
+            "fallback_used": fallback_used,
             "model_provider": run.model_provider,
             "model_name": run.model_name,
             "task_type": task_type,
             "message": "evaluation finished",
+            "error_code": None,
+            "error_message": None,
         }
 
     def _task_payload(self, task: EvaluationTask) -> Dict[str, Any]:
@@ -204,7 +241,11 @@ class EvaluationService:
             "expected_goals": case.expected_goals or [],
             "required_rules": case.required_rules or [],
             "forbidden_rules": case.forbidden_rules or [],
+            "trigger_conditions": case.trigger_conditions or [],
+            "expected_final_state": case.expected_final_state or "",
+            "user_behavior_type": case.user_behavior_type or "",
             "difficulty": case.difficulty,
+            "data_source": case.data_source or "",
         }
 
     def _normalize_user_turn(self, user_turn: Any, fallback_content: str) -> Dict[str, Any]:

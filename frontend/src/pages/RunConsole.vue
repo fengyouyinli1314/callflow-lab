@@ -3,7 +3,7 @@
     <div class="page-header">
       <div>
         <h1>开始评测</h1>
-        <p>选择任务和用例后自动执行多轮对话、规则评分与报告生成。</p>
+        <p>选择任务、用例和模型 provider 后，点击开始评测执行多轮对话、规则评分与报告生成。</p>
       </div>
     </div>
 
@@ -21,6 +21,10 @@
               <el-option v-for="item in cases" :key="item.id" :label="item.name" :value="item.id" />
             </el-select>
           </el-form-item>
+          <div class="case-actions">
+            <el-button :icon="Plus" @click="openCreateCase">新建用例</el-button>
+            <el-button :icon="Edit" :disabled="!selectedCase" @click="openEditCase">编辑当前用例</el-button>
+          </div>
           <el-form-item label="被测模型 provider">
             <el-select v-model="modelProvider" style="width: 100%">
               <el-option
@@ -33,7 +37,7 @@
           </el-form-item>
           <div class="debug-meta">
             <span>task_type: {{ selectedTask?.task_type || 'unknown' }}</span>
-            <span>model_provider: {{ displayProvider(result?.model_provider || modelProvider) }}</span>
+            <span>model_provider: {{ displayProvider(result?.provider_used || result?.model_provider || modelProvider) }}</span>
             <span>model_name: {{ displayProvider(result?.model_name || modelName) }}</span>
           </div>
           <el-button
@@ -139,14 +143,23 @@
         <el-empty v-else description="评测完成后显示报告摘要" />
       </div>
     </div>
+
+    <CaseEditor
+      v-model="caseEditorVisible"
+      :tasks="tasks"
+      :case-data="editingCase"
+      :default-task-id="taskId"
+      @saved="handleCaseSaved"
+    />
   </section>
 </template>
 
 <script setup>
 import { computed, onMounted, ref } from 'vue'
 import { ElMessage } from 'element-plus'
-import { VideoPlay, View } from '@element-plus/icons-vue'
+import { Edit, Plus, VideoPlay, View } from '@element-plus/icons-vue'
 import request from '../api/request'
+import CaseEditor from '../components/CaseEditor.vue'
 import ConversationTimeline from '../components/ConversationTimeline.vue'
 import ScoreRadar from '../components/ScoreRadar.vue'
 
@@ -159,6 +172,8 @@ const result = ref(null)
 const messages = ref([])
 const report = ref(null)
 const modelProvider = ref('mock_fallback')
+const caseEditorVisible = ref(false)
+const editingCase = ref(null)
 const providerOptions = [
   { label: 'mock_fallback（本地兜底，非真实 AI）', value: 'mock_fallback' },
   { label: 'openai_compatible（真实大模型 API）', value: 'openai_compatible' },
@@ -222,24 +237,78 @@ const loadCases = async () => {
   result.value = null
 }
 
+const openCreateCase = () => {
+  editingCase.value = null
+  caseEditorVisible.value = true
+}
+
+const openEditCase = () => {
+  if (!selectedCase.value) {
+    ElMessage.warning('请先选择用例')
+    return
+  }
+  editingCase.value = { ...selectedCase.value }
+  caseEditorVisible.value = true
+}
+
+const handleCaseSaved = async (savedCase) => {
+  taskId.value = savedCase.task_id
+  await loadCases()
+  caseId.value = savedCase.id
+}
+
 const start = async () => {
-  if (!taskId.value || !caseId.value) {
-    ElMessage.warning('请选择任务和用例')
+  if (!taskId.value || !caseId.value || !modelProvider.value) {
+    ElMessage.warning('请选择任务、用例和模型 provider')
     return
   }
   running.value = true
   messages.value = []
   report.value = null
   try {
-    result.value = await request.post('/api/runs/start', {
+    const runResult = await request.post('/api/runs/start', {
       task_id: taskId.value,
       case_id: caseId.value,
-      model_provider: normalizeProvider(modelProvider.value),
-      model_name: modelName.value
+      model_provider: normalizeProvider(modelProvider.value)
     })
-    messages.value = await request.get(`/api/runs/${result.value.run_id}/messages`)
-    report.value = await request.get(`/api/reports/${result.value.report_id}`)
+    result.value = runResult
+    if (runResult.success === false) {
+      console.error('[RunConsole] evaluation failed', {
+        run_id: runResult.run_id,
+        report_id: runResult.report_id,
+        provider_requested: runResult.provider_requested,
+        provider_used: runResult.provider_used,
+        error_code: runResult.error_code,
+        error_message: runResult.error_message
+      })
+      ElMessage.error(runResult.error_message || '评测失败')
+      return
+    }
+    messages.value = await request.get(`/api/runs/${runResult.run_id}/messages`)
+    report.value = await request.get(`/api/reports/${runResult.report_id}`)
+    console.info('[RunConsole] evaluation loaded', {
+      run_id: runResult.run_id,
+      report_id: runResult.report_id,
+      messages_count: messages.value.length,
+      report_exists: Boolean(report.value)
+    })
+    if (!messages.value.length || !report.value) {
+      console.error('[RunConsole] empty evaluation display payload', {
+        run_id: runResult.run_id,
+        report_id: runResult.report_id,
+        messages_count: messages.value.length,
+        report_exists: Boolean(report.value)
+      })
+    }
     ElMessage.success('评测完成')
+  } catch (error) {
+    console.error('[RunConsole] evaluation request error', {
+      task_id: taskId.value,
+      case_id: caseId.value,
+      model_provider: modelProvider.value,
+      error_message: error.message
+    })
+    ElMessage.error(error.message || '评测失败')
   } finally {
     running.value = false
   }
@@ -277,6 +346,13 @@ onMounted(async () => {
   color: var(--muted);
   font-size: 12px;
   line-height: 1.45;
+}
+
+.case-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+  margin: -4px 0 16px;
 }
 
 .case-summary label,
