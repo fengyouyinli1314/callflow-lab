@@ -7,6 +7,7 @@ from app.core.database import get_session
 from app.models.case import EvaluationCase
 from app.models.task import EvaluationTask
 from app.schemas.case import CaseCreate, CaseDraft, CaseGenerateRequest, CaseRead, CaseUpdate
+from app.services.case_mode import normalize_case_mode
 from app.services.case_registry import deduplicate_cases, existing_case, get_or_create_case, unique_cases
 from app.services.case_generator_service import CaseGeneratorService
 
@@ -79,6 +80,18 @@ def update_case(
     data = payload.model_dump(exclude_unset=True)
     if "task_id" in data and not session.get(EvaluationTask, data["task_id"]):
         raise HTTPException(status_code=404, detail="task not found")
+    if "case_mode" in data:
+        case_context = {
+            "name": data.get("name", case.name),
+            "user_profile": data.get("user_profile", case.user_profile),
+            "initial_message": data.get("initial_message", case.initial_message),
+            "expected_goals": data.get("expected_goals", case.expected_goals),
+            "expected_steps": data.get("expected_steps", getattr(case, "expected_steps", [])),
+            "required_rules": data.get("required_rules", case.required_rules),
+            "trigger_conditions": data.get("trigger_conditions", case.trigger_conditions),
+            "user_behavior_type": data.get("user_behavior_type", case.user_behavior_type),
+        }
+        data["case_mode"] = normalize_case_mode(data.get("case_mode"), case_context)
     next_task_id = data.get("task_id", case.task_id)
     next_name = data.get("name", case.name)
     next_initial_message = data.get("initial_message", case.initial_message)

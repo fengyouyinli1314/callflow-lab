@@ -22,7 +22,13 @@ class EvaluationTask(SQLModel, table=True):
     call_flow: Optional[str] = Field(default="", sa_column=Column(Text, nullable=True))
     knowledge_points: Optional[str] = Field(default="", sa_column=Column(Text, nullable=True))
     constraints: Optional[str] = Field(default="", sa_column=Column(Text, nullable=True))
+    steps: Optional[str] = Field(default="", sa_column=Column(Text, nullable=True))
+    executable_policy: Optional[str] = Field(default="", sa_column=Column(Text, nullable=True))
     task_type: Optional[str] = Field(default="generic_outbound", index=True, max_length=80)
     data_source: Optional[str] = Field(default="mock_sample", index=True, max_length=80)
     created_at: datetime = Field(default_factory=datetime.utcnow)
     updated_at: datetime = Field(default_factory=datetime.utcnow)
+
+    @property
+    def conversation_flow(self) -> str:
+        return self.call_flow or ""

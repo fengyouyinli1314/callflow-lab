@@ -11,12 +11,14 @@ class CaseBase(SQLModel):
     initial_message: str
     max_turns: int = 4
     expected_goals: List[str] = Field(default_factory=list)
+    expected_steps: List[str] = Field(default_factory=list)
     required_rules: List[str] = Field(default_factory=list)
     forbidden_rules: List[str] = Field(default_factory=list)
     difficulty: str = "中等"
     trigger_conditions: List[str] = Field(default_factory=list)
     expected_final_state: str = ""
     user_behavior_type: str = "正常配合"
+    case_mode: str = "branch"
     data_source: str = "manual"
 
 
@@ -31,12 +33,14 @@ class CaseUpdate(SQLModel):
     initial_message: Optional[str] = None
     max_turns: Optional[int] = None
     expected_goals: Optional[List[str]] = None
+    expected_steps: Optional[List[str]] = None
     required_rules: Optional[List[str]] = None
     forbidden_rules: Optional[List[str]] = None
     difficulty: Optional[str] = None
     trigger_conditions: Optional[List[str]] = None
     expected_final_state: Optional[str] = None
     user_behavior_type: Optional[str] = None
+    case_mode: Optional[str] = None
     data_source: Optional[str] = None
 
 
@@ -59,11 +63,13 @@ class CaseDraft(SQLModel):
     user_profile: str
     initial_message: str
     expected_goals: List[str] = Field(default_factory=list)
+    expected_steps: List[str] = Field(default_factory=list)
     required_rules: List[str] = Field(default_factory=list)
     forbidden_rules: List[str] = Field(default_factory=list)
     difficulty: str = "中等"
-    max_turns: int = Field(default=4, ge=1, le=12)
+    max_turns: int = Field(default=4, ge=1, le=30)
     trigger_conditions: List[str] = Field(default_factory=list)
     expected_final_state: str = ""
     user_behavior_type: str = "正常配合"
+    case_mode: str = "branch"
     data_source: str = "ai_generated"

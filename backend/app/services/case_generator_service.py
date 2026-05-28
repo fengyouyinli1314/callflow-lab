@@ -8,6 +8,9 @@ from typing import Any, Dict, List
 
 from app.core.config import settings
 from app.models.task import EvaluationTask
+from app.services.case_mode import normalize_case_mode
+from app.services.course_flow import COURSE_FULL_FLOW_CASE_NAME, COURSE_FULL_FLOW_EXPECTED_STEPS
+from app.services.rider_flow import RIDER_FULL_FLOW_EXPECTED_STEPS
 from app.services.target_model_client import TargetModelClient
 
 
@@ -145,17 +148,17 @@ class CaseGeneratorService:
 
     def _system_prompt(self, task_type: str) -> str:
         required_types = {
-            "rider_outbound": "正常愿意配送、不想配送、询问合同影响、询问如何退出飞毛腿、抱怨恶劣天气、质疑报名排名、追问额外奖励、超范围咨询",
-            "course_platform_outbound": "负责人正常沟通、非负责人转达、商家说忙、商家说在开车、追问标准直播和低延迟直播区别、询问费用差异、要求优惠券、第三方系统看不到选项、企业微信添加问题、结束前继续追问",
+            "rider_outbound": "一个递进式完整外呼流程用例，覆盖身份确认、合同已生效、午晚高峰和单量要求、是否开跑、鼓励/安抚、安全提醒、末尾说明排名与保资格规则、结束确认；退出、奖励和超范围问题只在用户主动追问时作为分支处理",
+            "course_platform_outbound": "一个强渐进式完整外呼流程用例，主流程按身份确认、知情确认、升级内容、区别/价格、发布方式、配置路径、费用检查、企业微信、结束通话推进；每步内保留非负责人、忙、开车、费用、优惠券、第三方看不到等条件分支，不要拆成多个默认用例",
         }.get(task_type, "正常配合、拒绝配合、情绪不满、反复追问、信息缺失、超范围问题")
         return (
             "你是 callflow-lab 的测试用例生成器。"
             "请根据复杂外呼任务指令生成测试用例草稿，不要生成真实外呼内容，不要保存入库。"
             "只输出合法 JSON 数组，不要 Markdown。"
-            "每个数组元素必须包含字段：name, user_profile, initial_message, expected_goals, "
-            "required_rules, forbidden_rules, difficulty, max_turns, trigger_conditions, "
+            "每个数组元素必须包含字段：name, user_profile, initial_message, expected_goals, expected_steps, "
+            "required_rules, forbidden_rules, difficulty, max_turns, case_mode, trigger_conditions, "
             "expected_final_state, user_behavior_type, data_source。"
-            "expected_goals、required_rules、forbidden_rules、trigger_conditions 必须是字符串数组。"
+            "expected_goals、expected_steps、required_rules、forbidden_rules、trigger_conditions 必须是字符串数组。"
             "data_source 固定为 ai_generated。"
             "用例要覆盖这些类型：" + required_types + "。"
         )
@@ -178,7 +181,7 @@ class CaseGeneratorService:
                 "生成的是评测用例草稿，不是模型回复。",
                 "用例必须围绕 task.instruction_text，不要写成真实外呼业务系统。",
                 "不要串用其他任务业务词。",
-                "max_turns 在 1 到 12 之间，推荐 3 到 6。",
+            "max_turns 在 1 到 30 之间，分支用例推荐 3 到 6，全流程用例可到 30。",
             ],
             "output_example": [self._example_for_task_type(task_type)],
         }
@@ -187,32 +190,36 @@ class CaseGeneratorService:
     def _example_for_task_type(self, task_type: str) -> Dict[str, Any]:
         if task_type == "course_platform_outbound":
             return {
-                "name": "课程追问直播区别",
-                "user_profile": "反复追问负责人",
-                "initial_message": "标准直播和低延迟直播到底有什么区别？",
-                "expected_goals": ["说明延迟差异", "说明适用场景"],
-                "required_rules": ["必须说明标准直播和低延迟直播区别", "必须说明低延迟适合互动"],
-                "forbidden_rules": ["禁止答非所问"],
-                "difficulty": "中等",
-                "max_turns": 5,
-                "trigger_conditions": ["用户追问区别、延迟、适用场景"],
-                "expected_final_state": "用户理解直播类型差异",
-                "user_behavior_type": "反复追问",
+                "name": COURSE_FULL_FLOW_CASE_NAME,
+                "user_profile": "机构负责人，按强渐进流程沟通；每轮只回应一个点，会追问知情、区别、费用、发布方式、配置路径、学员端费用和企业微信。",
+                "initial_message": "我是负责人，你说吧。",
+                "expected_goals": ["完整覆盖课程直播产品升级主流程", "每步内根据商家回应处理条件分支", "保持 15-20 字内极简电话话术"],
+                "expected_steps": list(COURSE_FULL_FLOW_EXPECTED_STEPS),
+                "required_rules": ["必须确认负责人", "必须确认是否知情", "必须说明发布页新增标准直播和低延迟直播", "必须询问发布方式并说明配置路径", "必须说明企业微信添加逻辑"],
+                "forbidden_rules": ["禁止承诺优惠券或折扣", "禁止使用不专业语气", "禁止长篇解释"],
+                "difficulty": "困难",
+                "max_turns": 30,
+                "trigger_conditions": ["主流程强渐进推进；忙碌先说就1分钟，开车则稍后再打并结束；其他问题在当前步骤内简短作答后回到主流程。"],
+                "expected_final_state": "机构负责人理解升级内容并知道后续配置与企业微信安排",
+                "user_behavior_type": "强渐进完整流程",
+                "case_mode": "full_flow",
                 "data_source": "ai_generated",
             }
         if task_type == "rider_outbound":
             return {
-                "name": "骑手质疑报名排名",
-                "user_profile": "情绪不满骑手",
-                "initial_message": "为什么别人能报上，我报不上？",
-                "expected_goals": ["说明报名按排名", "说明不是站长干预"],
-                "required_rules": ["必须说明报名按排名", "必须说明不是站长干预"],
-                "forbidden_rules": ["禁止承诺一定获得资格"],
+                "name": "飞毛腿骑手合同生效外呼用例",
+                "user_profile": "递进式综合骑手，先确认本人并愿意开跑，听完高峰和单量要求后接受鼓励、安全提醒，并在收口前追问名额是否由站长决定。",
+                "initial_message": "是我，你说。",
+                "expected_goals": ["完整覆盖飞毛腿合同生效外呼主流程", "末尾说明排名与保资格规则", "遵守约 30 字以内电话话术"],
+                "expected_steps": list(RIDER_FULL_FLOW_EXPECTED_STEPS),
+                "required_rules": ["必须说明合同已签署并生效", "必须说明单日/多日合同完成要求", "必须提醒安全", "必须说明报名排名非站长干预和保资格规则"],
+                "forbidden_rules": ["禁止强迫配送", "禁止承诺具体奖励金额"],
                 "difficulty": "中等",
-                "max_turns": 4,
-                "trigger_conditions": ["用户提到排名、名额、报不上"],
-                "expected_final_state": "用户理解规则或结束咨询",
-                "user_behavior_type": "情绪不满",
+                "max_turns": 10,
+                "trigger_conditions": ["默认按主流程推进，排名与保资格规则放在末尾收口；若用户主动问排名、名额、站长干预、拒单取消超时或恶劣天气，可提前触发解释。"],
+                "expected_final_state": "骑手理解合同和飞毛腿规则，按要求配送或知道边界。",
+                "user_behavior_type": "递进式完整流程",
+                "case_mode": "full_flow",
                 "data_source": "ai_generated",
             }
         return {
@@ -220,6 +227,7 @@ class CaseGeneratorService:
             "user_profile": "反复追问外呼对象",
             "initial_message": "你先说清楚，这件事对我有什么影响？",
             "expected_goals": ["回答用户追问", "回到任务目标"],
+            "expected_steps": [],
             "required_rules": ["必须回答用户问题", "必须推进任务流程"],
             "forbidden_rules": ["禁止只重复开场"],
             "difficulty": "中等",
@@ -227,6 +235,7 @@ class CaseGeneratorService:
             "trigger_conditions": ["用户追问影响、原因、下一步"],
             "expected_final_state": "用户获得关键信息",
             "user_behavior_type": "反复追问",
+            "case_mode": "branch",
             "data_source": "ai_generated",
         }
 
@@ -266,11 +275,12 @@ class CaseGeneratorService:
         difficulty = str(row.get("difficulty") or "").strip()
         if difficulty not in VALID_DIFFICULTIES:
             difficulty = self._first_difficulty(difficulty_distribution)
-        return {
+        draft = {
             "name": self._text(row.get("name"), "AI 生成测试用例"),
             "user_profile": self._text(row.get("user_profile"), "外呼对象"),
             "initial_message": self._text(row.get("initial_message"), "您好，可以简单说一下。"),
             "expected_goals": self._string_list(row.get("expected_goals")),
+            "expected_steps": self._string_list(row.get("expected_steps")),
             "required_rules": self._string_list(row.get("required_rules")),
             "forbidden_rules": self._string_list(row.get("forbidden_rules")),
             "difficulty": difficulty,
@@ -278,8 +288,11 @@ class CaseGeneratorService:
             "trigger_conditions": self._string_list(row.get("trigger_conditions")),
             "expected_final_state": self._text(row.get("expected_final_state"), "用户理解规则或结束咨询"),
             "user_behavior_type": self._text(row.get("user_behavior_type") or row.get("_behavior_type"), "正常配合"),
+            "case_mode": str(row.get("case_mode") or "").strip(),
             "data_source": "ai_generated",
         }
+        draft["case_mode"] = normalize_case_mode(draft["case_mode"], draft)
+        return draft
 
     def _fill_with_fallback(
         self,
@@ -309,242 +322,38 @@ class CaseGeneratorService:
     def _rider_catalog(self) -> List[Dict[str, Any]]:
         return [
             {
-                "name": "骑手正常愿意配送",
-                "user_profile": "正常配合骑手",
-                "initial_message": "合同生效了是吗？那我今天可以开始跑吗？",
-                "expected_goals": ["确认合同已生效", "说明可以开始配送", "提示完成要求"],
-                "required_rules": ["必须说明合同已生效", "必须说明可以开始配送"],
-                "forbidden_rules": ["禁止承诺一定获得更多派单"],
-                "difficulty": "简单",
-                "max_turns": 3,
-                "trigger_conditions": ["用户表示愿意配送、询问能否开始"],
-                "expected_final_state": "用户确认开始配送",
+                "name": "飞毛腿骑手合同生效外呼用例",
+                "user_profile": "递进式综合骑手，先确认本人并愿意开跑，听完高峰和单量要求后接受鼓励、安全提醒，并在收口前追问名额是否由站长决定。",
+                "initial_message": "是我，你说。",
+                "expected_goals": ["完整覆盖飞毛腿合同生效外呼主流程", "末尾说明排名与保资格规则", "保持电话话术自然且约 30 字以内"],
+                "expected_steps": list(RIDER_FULL_FLOW_EXPECTED_STEPS),
+                "required_rules": ["必须说明合同已签署并生效", "必须说明单日/多日合同完成要求", "必须提醒安全", "必须说明报名排名非站长干预和保资格规则"],
+                "forbidden_rules": ["禁止强迫配送", "禁止承诺具体奖励金额", "禁止编造职责外信息"],
+                "difficulty": "中等",
+                "max_turns": 10,
+                "trigger_conditions": ["默认按主流程推进，排名与保资格规则放在末尾收口；若用户主动问排名、名额、站长干预、拒单取消超时或恶劣天气，可提前触发解释。"],
+                "expected_final_state": "骑手理解合同和飞毛腿规则，按要求配送或知道边界。",
                 "_behavior_type": "正常配合",
-            },
-            {
-                "name": "骑手暂时不想配送",
-                "user_profile": "拒绝配合骑手",
-                "initial_message": "我今天不想跑了，可以不配送吗？",
-                "expected_goals": ["先理解拒绝原因", "说明未完成可能影响合同和派单", "避免强迫配送"],
-                "required_rules": ["必须说明未完成影响", "必须保留安全和自愿边界"],
-                "forbidden_rules": ["禁止强迫骑手配送", "禁止威胁或夸大后果"],
-                "difficulty": "中等",
-                "max_turns": 4,
-                "trigger_conditions": ["用户明确表示不想配送"],
-                "expected_final_state": "用户了解影响后自行决定",
-                "_behavior_type": "拒绝配合",
-            },
-            {
-                "name": "骑手询问合同影响",
-                "user_profile": "反复追问骑手",
-                "initial_message": "如果今天没完成 X 单，会影响合同和派单吗？",
-                "expected_goals": ["说明单日 X 单要求", "说明合同和派单可能受影响"],
-                "required_rules": ["必须说明 X 单要求", "必须说明合同和派单影响"],
-                "forbidden_rules": ["禁止给出职责外承诺"],
-                "difficulty": "中等",
-                "max_turns": 4,
-                "trigger_conditions": ["用户提到 X 单、合同、派单影响"],
-                "expected_final_state": "用户理解完成要求",
-                "_behavior_type": "反复追问",
-            },
-            {
-                "name": "骑手询问退出飞毛腿",
-                "user_profile": "信息咨询骑手",
-                "initial_message": "我想退出飞毛腿，应该在哪里取消？",
-                "expected_goals": ["说明前一天 Z 点前取消", "说明在 App 报名页操作"],
-                "required_rules": ["必须说明退出时间要求", "必须说明 App 报名页路径"],
-                "forbidden_rules": ["禁止代替用户取消", "禁止承诺一定取消成功"],
-                "difficulty": "中等",
-                "max_turns": 4,
-                "trigger_conditions": ["用户提到退出、取消、不参加"],
-                "expected_final_state": "用户知道退出路径",
-                "_behavior_type": "信息缺失",
-            },
-            {
-                "name": "骑手抱怨恶劣天气",
-                "user_profile": "情绪不满骑手",
-                "initial_message": "外面雨太大了，非要我现在接单吗？",
-                "expected_goals": ["先安抚情绪", "提醒安全第一", "说明能跑再接单"],
-                "required_rules": ["必须提醒安全", "必须避免强迫恶劣天气配送"],
-                "forbidden_rules": ["禁止强迫冒险配送", "禁止忽视用户情绪"],
-                "difficulty": "困难",
-                "max_turns": 5,
-                "trigger_conditions": ["用户提到下雨、恶劣天气、危险"],
-                "expected_final_state": "用户接受安全优先或结束通话",
-                "_behavior_type": "情绪不满",
-            },
-            {
-                "name": "骑手质疑报名排名",
-                "user_profile": "情绪不满骑手",
-                "initial_message": "为什么别人能报上，我报不上？",
-                "expected_goals": ["说明报名按排名", "说明不是站长干预"],
-                "required_rules": ["必须说明报名按排名", "必须说明不是站长干预"],
-                "forbidden_rules": ["禁止承诺一定获得资格"],
-                "difficulty": "中等",
-                "max_turns": 4,
-                "trigger_conditions": ["用户提到排名、名额、报不上"],
-                "expected_final_state": "用户理解规则或结束咨询",
-                "_behavior_type": "情绪不满",
-            },
-            {
-                "name": "骑手追问额外奖励",
-                "user_profile": "反复追问骑手",
-                "initial_message": "完成 X 单之外还有额外奖励吗？你能保证吗？",
-                "expected_goals": ["只说明当前任务已知要求", "不承诺额外奖励", "引导以页面规则为准"],
-                "required_rules": ["必须避免编造额外奖励", "必须说明以当前规则为准"],
-                "forbidden_rules": ["禁止承诺额外奖励", "禁止编造未给出的政策"],
-                "difficulty": "困难",
-                "max_turns": 5,
-                "trigger_conditions": ["用户追问奖励、补贴、保证"],
-                "expected_final_state": "用户知道未承诺额外奖励",
-                "_behavior_type": "反复追问",
-            },
-            {
-                "name": "骑手超范围咨询",
-                "user_profile": "超范围咨询骑手",
-                "initial_message": "我还想问一下其他平台活动规则，你能一起解释吗？",
-                "expected_goals": ["说明只能处理当前飞毛腿任务", "回到合同生效和配送要求"],
-                "required_rules": ["必须拒绝超范围解释", "必须拉回当前任务"],
-                "forbidden_rules": ["禁止编造其他平台规则"],
-                "difficulty": "困难",
-                "max_turns": 4,
-                "trigger_conditions": ["用户询问当前任务外的平台规则"],
-                "expected_final_state": "用户接受边界或结束咨询",
-                "_behavior_type": "超范围问题",
+                "case_mode": "full_flow",
             },
         ]
 
     def _course_catalog(self) -> List[Dict[str, Any]]:
         return [
             {
-                "name": "课程负责人正常沟通",
-                "user_profile": "正常配合负责人",
+                "name": COURSE_FULL_FLOW_CASE_NAME,
+                "user_profile": "机构负责人，按强渐进流程沟通；每轮只回应一个点，会追问知情、区别、费用、发布方式、配置路径、学员端费用和企业微信。",
                 "initial_message": "我是负责人，你说吧。",
-                "expected_goals": ["确认负责人身份", "说明发布页升级", "说明标准直播和低延迟直播"],
-                "required_rules": ["必须确认负责人", "必须说明直播发布页升级"],
-                "forbidden_rules": ["禁止长篇介绍"],
-                "difficulty": "简单",
-                "max_turns": 5,
-                "trigger_conditions": ["用户确认自己是负责人"],
-                "expected_final_state": "负责人理解升级内容",
-                "_behavior_type": "正常配合",
-            },
-            {
-                "name": "课程非负责人转达",
-                "user_profile": "非负责人前台",
-                "initial_message": "我不是负责人，我只是前台。",
-                "expected_goals": ["请对方转达负责人", "简短说明发布页升级"],
-                "required_rules": ["必须请对方转达", "必须简短说明升级内容"],
-                "forbidden_rules": ["禁止强行继续推销"],
-                "difficulty": "中等",
-                "max_turns": 4,
-                "trigger_conditions": ["用户说明不是负责人"],
-                "expected_final_state": "用户愿意转达或结束通话",
-                "_behavior_type": "信息缺失",
-            },
-            {
-                "name": "课程商家说忙",
-                "user_profile": "时间紧张商家",
-                "initial_message": "我现在很忙，能不能别说太久？",
-                "expected_goals": ["压缩话术", "说明只需一分钟", "优先传达升级重点"],
-                "required_rules": ["必须简短回应", "必须尊重用户忙碌状态"],
-                "forbidden_rules": ["禁止继续长篇介绍"],
-                "difficulty": "中等",
-                "max_turns": 3,
-                "trigger_conditions": ["用户说忙、没时间"],
-                "expected_final_state": "用户听完重点或约定稍后",
-                "_behavior_type": "拒绝配合",
-            },
-            {
-                "name": "课程商家开车场景",
-                "user_profile": "正在开车商家",
-                "initial_message": "我在开车，不方便听。",
-                "expected_goals": ["立即停止介绍", "提醒安全", "约定稍后再打"],
-                "required_rules": ["必须安全结束", "必须避免继续推销"],
-                "forbidden_rules": ["禁止在开车场景继续介绍"],
+                "expected_goals": ["完整覆盖课程直播产品升级主流程", "每步内根据商家回应处理条件分支", "保持 15-20 字内极简电话话术"],
+                "expected_steps": list(COURSE_FULL_FLOW_EXPECTED_STEPS),
+                "required_rules": ["必须确认负责人", "必须确认是否知情", "必须说明发布页新增标准直播和低延迟直播", "必须询问发布方式并说明配置路径", "必须说明企业微信添加逻辑"],
+                "forbidden_rules": ["禁止承诺优惠券或折扣", "禁止使用不专业语气", "禁止长篇解释"],
                 "difficulty": "困难",
-                "max_turns": 2,
-                "trigger_conditions": ["用户说在开车、不方便听"],
-                "expected_final_state": "安全结束通话",
-                "_behavior_type": "拒绝配合",
-            },
-            {
-                "name": "课程追问直播区别",
-                "user_profile": "反复追问负责人",
-                "initial_message": "标准直播和低延迟直播到底有什么区别？",
-                "expected_goals": ["说明延迟差异", "说明适用场景", "避免过度展开"],
-                "required_rules": ["必须说明标准直播和低延迟直播区别", "必须说明低延迟适合互动"],
-                "forbidden_rules": ["禁止答非所问"],
-                "difficulty": "中等",
-                "max_turns": 5,
-                "trigger_conditions": ["用户追问区别、延迟、适用场景"],
-                "expected_final_state": "用户理解直播类型差异",
-                "_behavior_type": "反复追问",
-            },
-            {
-                "name": "课程询问费用差异",
-                "user_profile": "关注成本负责人",
-                "initial_message": "低延迟直播会不会更贵？费用怎么算？",
-                "expected_goals": ["说明费用可能有差异", "以页面或配置为准", "避免承诺具体价格"],
-                "required_rules": ["必须说明费用差异边界", "必须避免编造价格"],
-                "forbidden_rules": ["禁止承诺具体费用不变"],
-                "difficulty": "困难",
-                "max_turns": 5,
-                "trigger_conditions": ["用户询问费用、价格、计费"],
-                "expected_final_state": "用户知道费用以页面为准",
-                "_behavior_type": "反复追问",
-            },
-            {
-                "name": "课程要求优惠券",
-                "user_profile": "索要优惠商家",
-                "initial_message": "那你们能不能给我优惠券？",
-                "expected_goals": ["说明不能承诺优惠券", "回到升级说明和配置路径"],
-                "required_rules": ["必须拒绝承诺优惠券", "必须说明以页面规则为准"],
-                "forbidden_rules": ["禁止承诺发放优惠券"],
-                "difficulty": "困难",
-                "max_turns": 4,
-                "trigger_conditions": ["用户要求优惠券、优惠、减免"],
-                "expected_final_state": "用户理解不能承诺优惠",
-                "_behavior_type": "超范围问题",
-            },
-            {
-                "name": "课程第三方系统看不到选项",
-                "user_profile": "技术不熟悉商家",
-                "initial_message": "我第三方系统里看不到低延迟直播选项。",
-                "expected_goals": ["确认第三方系统路径", "引导进入直播平台管理", "说明选项显示边界"],
-                "required_rules": ["必须按第三方系统路径引导", "必须避免让用户误走 Web 控制台"],
-                "forbidden_rules": ["禁止给出不确定配置承诺"],
-                "difficulty": "困难",
-                "max_turns": 6,
-                "trigger_conditions": ["用户提到第三方系统、看不到选项"],
-                "expected_final_state": "用户知道下一步查看路径",
-                "_behavior_type": "信息缺失",
-            },
-            {
-                "name": "课程企业微信添加问题",
-                "user_profile": "需要后续对接商家",
-                "initial_message": "这个问题后面要加企业微信吗？加谁？",
-                "expected_goals": ["说明企业微信添加边界", "确认后续对接方式", "避免泄露或编造联系人"],
-                "required_rules": ["必须说明按任务要求添加或转达", "必须避免编造联系人"],
-                "forbidden_rules": ["禁止编造企业微信账号"],
-                "difficulty": "中等",
-                "max_turns": 4,
-                "trigger_conditions": ["用户提到企业微信、加谁、后续联系"],
-                "expected_final_state": "用户知道后续联系边界",
-                "_behavior_type": "信息缺失",
-            },
-            {
-                "name": "课程结束前继续追问",
-                "user_profile": "结束前继续追问负责人",
-                "initial_message": "等等，最后再问一下在哪里配置？",
-                "expected_goals": ["承接继续追问", "询问 Web 控制台或第三方系统", "给出对应路径"],
-                "required_rules": ["必须回答配置位置", "必须根据发布方式区分路径"],
-                "forbidden_rules": ["禁止直接结束忽略追问"],
-                "difficulty": "困难",
-                "max_turns": 5,
-                "trigger_conditions": ["用户在结束前继续追问配置位置"],
-                "expected_final_state": "用户获得配置路径后结束",
-                "_behavior_type": "反复追问",
+                "max_turns": 30,
+                "trigger_conditions": ["主流程强渐进推进；忙碌先说就1分钟，开车则稍后再打并结束；其他问题在当前步骤内简短作答后回到主流程。"],
+                "expected_final_state": "机构负责人理解升级内容并知道后续配置与企业微信安排",
+                "_behavior_type": "强渐进完整流程",
+                "case_mode": "full_flow",
             },
         ]
 
@@ -665,7 +474,7 @@ class CaseGeneratorService:
             number = int(value)
         except (TypeError, ValueError):
             number = 4
-        return max(1, min(12, number))
+        return max(1, min(30, number))
 
     def _first_difficulty(self, difficulty_distribution: List[str]) -> str:
         for item in difficulty_distribution:

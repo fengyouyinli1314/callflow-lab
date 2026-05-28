@@ -36,6 +36,8 @@ def _ensure_task_columns() -> None:
         "call_flow": "TEXT",
         "knowledge_points": "TEXT",
         "constraints": "TEXT",
+        "steps": "TEXT",
+        "executable_policy": "TEXT",
         "task_type": "VARCHAR(80)",
         "data_source": "VARCHAR(80)",
     }
@@ -56,8 +58,10 @@ def _ensure_case_columns() -> None:
     existing_columns = {column["name"] for column in inspector.get_columns("evaluation_cases")}
     required_columns = {
         "trigger_conditions": "JSON DEFAULT '[]'",
+        "expected_steps": "JSON DEFAULT '[]'",
         "expected_final_state": "TEXT DEFAULT ''",
         "user_behavior_type": "VARCHAR(80) DEFAULT '正常配合'",
+        "case_mode": "VARCHAR(40) DEFAULT 'branch'",
         "data_source": "VARCHAR(80) DEFAULT 'manual'",
     }
     with engine.begin() as connection:
@@ -65,8 +69,13 @@ def _ensure_case_columns() -> None:
             if column_name not in existing_columns:
                 connection.execute(text(f"ALTER TABLE evaluation_cases ADD COLUMN {column_name} {column_type}"))
         connection.execute(text("UPDATE evaluation_cases SET trigger_conditions = '[]' WHERE trigger_conditions IS NULL"))
+        connection.execute(text("UPDATE evaluation_cases SET expected_steps = '[]' WHERE expected_steps IS NULL"))
         connection.execute(text("UPDATE evaluation_cases SET expected_final_state = '' WHERE expected_final_state IS NULL"))
         connection.execute(text("UPDATE evaluation_cases SET user_behavior_type = '正常配合' WHERE user_behavior_type IS NULL OR user_behavior_type = ''"))
+        connection.execute(text("UPDATE evaluation_cases SET case_mode = 'branch' WHERE case_mode IS NULL OR case_mode = ''"))
+        connection.execute(text("UPDATE evaluation_cases SET case_mode = 'full_flow' WHERE name LIKE '%负责人正常沟通%' OR name LIKE '%正常愿意配送%' OR name LIKE '%正常配合%'"))
+        connection.execute(text("UPDATE evaluation_cases SET case_mode = 'abnormal_exit' WHERE name LIKE '%开车%' OR name LIKE '%无法配送%' OR name LIKE '%拒绝配送%'"))
+        connection.execute(text("UPDATE evaluation_cases SET max_turns = 5 WHERE case_mode = 'full_flow' AND max_turns < 5"))
         connection.execute(text("UPDATE evaluation_cases SET data_source = 'manual' WHERE data_source IS NULL OR data_source = ''"))
 
 
@@ -111,6 +120,7 @@ def _ensure_run_columns() -> None:
     required_columns = {
         "model_provider": "VARCHAR(80) DEFAULT 'mock_fallback'",
         "model_name": "VARCHAR(120) DEFAULT 'mock_fallback'",
+        "memory_state": "JSON",
     }
     with engine.begin() as connection:
         for column_name, column_type in required_columns.items():

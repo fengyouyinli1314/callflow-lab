@@ -233,6 +233,7 @@ task_completion * 0.25
 - `failed_rules`
 - `active_rules`
 - `pending_rules`
+- `untriggered_rules`
 - `not_applicable_rules`
 - `current_stage`
 - `active_rules_explanation`
@@ -250,7 +251,8 @@ task_completion * 0.25
 3. `stage_rules`：课程直播等流程型任务中当前流程阶段应该完成的规则。
 4. `triggered_rules`：用户明确问到退出、天气、排名、费用、配置、开车等问题后才激活的规则。
 5. `pending_rules`：后续流程节点规则，只展示为待完成，不进入当前轮失败规则。
-6. `not_applicable_rules`：当前用例未触发规则，不参与扣分。
+6. `untriggered_rules`：当前用例未触发规则，不参与扣分。
+7. `not_applicable_rules`：兼容旧报告字段，可作为 `untriggered_rules` 的别名或派生字段。
 
 课程直播任务 `course_platform_outbound` 的评分应支持流程阶段：
 - `identity_check`
@@ -264,7 +266,124 @@ task_completion * 0.25
 
 例如“我是负责人，你说吧。”首轮只应激活身份识别和升级说明相关规则；费用差异、企业微信添加、结束确认、Web 控制台 / 第三方系统路径等后续流程规则应进入 `pending_rules`，不能直接计入失败规则。只有用户追问“区别、在哪里配置、费用、优惠券、企业微信、开车”等内容时，相关触发规则才参与评分。
 
-## 五点八、批量评测约束
+## 五点七点五、轻量知识召回约束
+
+官方脱敏任务中的 `Opening Line`、`Conversation Flow / Call Flow`、`Knowledge Points / FAQ` 和 `Constraints` 必须能参与对话生成和评估。
+
+当前阶段使用轻量关键词检索，不引入向量数据库，不引入复杂 embedding，不新增外部知识库服务。
+
+知识召回统一入口为：
+
+```python
+backend/app/services/knowledge_base.py
+build_knowledge_chunks(task)
+retrieve_knowledge(task, user_message, top_k=3)
+```
+
+知识片段结构固定为：
+
+```json
+{
+  "task_id": 1,
+  "chunk_type": "opening/flow/faq/constraint",
+  "title": "退出飞毛腿流程",
+  "content": "需前一天 Z 点前在 App 的飞毛腿报名中取消，次日生效。",
+  "source": "Knowledge Points"
+}
+```
+
+`TargetModelClient.generate_reply(...)` 在调用被测模型或 mock fallback 生成回复前，必须先执行 `retrieve_knowledge(task, last_user_message)`，并把 `retrieved_knowledge` 放入真实模型 prompt 或 custom endpoint payload。Prompt 中应包含“以下是本轮可用知识片段，请优先依据这些内容回答。”的约束。
+
+每轮 `RunMessage.detail` 必须保存 `retrieved_knowledge`，用于报告、调试和后续评估。
+
+`EvaluatorAgent.evaluate(...)` 必须接收或从 messages 中读取 `retrieved_knowledge`，并判断：
+- 被测模型是否使用了相关知识。
+- 是否遗漏关键知识。
+- 是否编造知识库外内容。
+
+重要验证场景：
+- 用户问“我想退出飞毛腿，怎么取消？”应召回“退出飞毛腿流程”。
+- 用户问“标准直播和低延迟有什么区别？”应召回“标准直播与低延迟直播区别”。
+
+## 五点七点六、Opening Line 对话启动约束
+
+官方脱敏任务存在 `Opening Line` 时，评测对话必须由被测模型先发起开场白，再由用户模拟器回应。
+
+`case.initial_message` 的语义固定为：
+
+```text
+用户在听到被测模型 Opening Line 后的第一句回应。
+```
+
+它不是系统对话的第一句话。
+
+对话保存与展示应体现：
+- 第 0 轮：被测模型开场，保存为 assistant / target_model 消息。
+- 第 1 轮：用户模拟器根据 `case.initial_message` 和 `case.user_profile` 回应，然后被测模型继续推进流程。
+- 后续轮次：保持用户发言后被测模型回复的多轮评测结构。
+
+Opening Line 阶段可参与评分，但只检查：
+- 是否完成身份确认开场。
+- 是否符合任务角色。
+- 是否没有业务串场。
+
+Opening Line 阶段不得检查费用、企业微信、配置路径、结束确认等后续流程规则；这些规则应在用户触发或流程推进后再进入 active rules。
+
+## 五点七点七、流式评测输出约束
+
+开始评测页应优先调用：
+
+```text
+POST /api/runs/stream
+```
+
+该接口使用 `StreamingResponse` / SSE 输出事件，不能等完整对话和报告全部生成后再一次性返回给前端。
+
+流式对话事件顺序应体现：
+- `user_message`：用户模拟器气泡先出现。
+- `assistant_start`：被测模型气泡先创建。
+- `assistant_delta`：被测模型回复逐字或逐段追加。
+- `assistant_done`：本轮被测模型回复结束。
+- `rule_result`：本轮规则评分完成。
+
+存在 Opening Line 时，第 0 轮应先发送 `assistant_start`、`assistant_delta`、`assistant_done`，再进入第 1 轮用户回应。
+
+对话轮次结束后，报告阶段不得让页面空等，应发送：
+- `report_generating`：报告生成中或 Judge / Report Agent 处理中。
+- `judge_result`：LLM-as-a-Judge 阶段评分摘要。
+- `done`：包含 `run_id` 和 `report_id`，前端据此展示“查看完整报告”。
+
+若流式执行中途失败，后端必须发送 `error` 事件，前端停止 loading 并展示错误原因。
+
+## 五点八、用例模式与对话轮次控制约束
+
+测试用例应保留 `case_mode`，用于区分用例目标和合理对话长度：
+
+1. `branch`
+   分支专项用例，只测试某个具体问题或分支，例如退出飞毛腿、费用差异、报名排名。当前测试目标完成后可以提前结束，通常 2-4 轮。
+
+2. `full_flow`
+   全流程覆盖用例，测试身份确认、核心说明、关键追问、配置/下一步等主要流程，例如负责人正常沟通、正常愿意配送。不应 1-2 轮就结束，除非用户明确拒绝、开车或无法继续；通常应尽量覆盖 5-7 轮内的关键步骤。
+
+3. `abnormal_exit`
+   异常终止用例，例如商家说在开车、骑手坚持无法配送。触发异常终止条件后可以立即结束，1-2 轮结束正常。
+
+`evaluation_service.py` 的结束逻辑不得只依赖 `max_turns`，必须结合：
+- `case_mode`
+- 用户模拟器返回的 `should_continue`
+- 当前 active rules 是否已经完成
+- `pending_rules` 或关键流程步骤是否仍未覆盖
+
+每轮 message detail 应保留 `case_mode`、规划后的最大轮数和 stop decision 信息，方便报告或调试解释为什么提前结束或继续推进。
+
+前端开始评测页应展示当前用例的模式、最大轮数和当前目标，避免分支专项、全流程和异常终止用例的轮次差异被误解为不稳定。
+
+重要验证场景：
+- 飞毛腿“询问如何退出飞毛腿”：`branch`，2-3 轮结束正常。
+- 课程直播“负责人正常沟通”：`full_flow`，不应 1-2 轮结束，应覆盖身份确认、升级说明、直播区别、发布方式/配置路径等关键步骤。
+- 课程直播“商家说在开车”：`abnormal_exit`，1-2 轮结束正常。
+
+## 五点九、批量评测约束
 
 批量评测能力用于把单条对话 Demo 扩展为真实评测平台能力，不等同于强制 A/B 测试。
 
@@ -303,7 +422,7 @@ EvaluationService.start_evaluation(...)
 
 当传入多个 `model_providers` 时，可以额外返回 `model_score_summary` 和 `best_model_provider`，但前端不应强行写成“A/B 测试”。
 
-## 五点九、模型 provider 配置约束
+## 五点十、模型 provider 配置约束
 
 模型配置页用于展示和测试被测模型 provider 接入状态，不负责训练模型，也不在前端保存或展示 API Key 明文。
 
@@ -327,7 +446,7 @@ POST /api/model-providers/test
 
 真实模型的 Base URL、Model Name、Endpoint 和 API Key 仍以 `.env` 为配置来源；前端只展示非敏感配置和 API Key 是否已配置。
 
-## 五点十、初始化与测试用例幂等性约束
+## 五点十一、初始化与测试用例幂等性约束
 
 后端启动初始化、Excel 导入和 sample seed 必须具备幂等性，不允许因为重复启动后端或重复导入指令而重复创建同一个测试用例。
 
@@ -367,6 +486,12 @@ POST /api/cases/deduplicate
 
 - backend/app/services/evaluation_service.py
   评测执行主流程。负责创建 run、执行多轮对话、调用被测模型、调用评分器、生成报告。
+
+- backend/app/services/case_mode.py
+  用例模式规范化与推断工具。负责把用例识别为 `branch`、`full_flow` 或 `abnormal_exit`，供用例生成、入库和评测结束逻辑复用。
+
+- backend/app/services/knowledge_base.py
+  轻量知识召回模块。负责从任务的 Opening Line、Conversation Flow / Call Flow、Knowledge Points / FAQ、Constraints 中构建知识片段，并按用户本轮发言做关键词召回。
 
 - backend/app/services/batch_evaluation_service.py
   批量评测服务。负责展开任务、用例、模型 provider 和重复次数，并复用单次评测流程生成汇总统计。

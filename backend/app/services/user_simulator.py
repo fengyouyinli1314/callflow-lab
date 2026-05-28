@@ -31,8 +31,10 @@ class UserSimulator:
         case_payload: Dict[str, Any],
         history: List[Dict[str, Any]],
         turn_index: int,
+        memory_state: Dict[str, Any] | None = None,
     ) -> Dict[str, Any]:
-        result = self.agent.generate_message(task_payload, case_payload, history, turn_index)
+        result = self.agent.generate_message(task_payload, case_payload, history, turn_index, memory_state=memory_state)
+        recent_messages = list(history[-6:])
 
         if not self.llm_client.use_mock:
             fallback = result["content"]
@@ -50,10 +52,20 @@ class UserSimulator:
                         "role": "user",
                         "content": str(
                             {
-                                "task": task_payload,
-                                "case": case_payload,
-                                "history": history,
+                                "task": {
+                                    "instruction_text": task_payload.get("instruction_text", ""),
+                                    "task_type": task_payload.get("task_type", ""),
+                                },
+                                "case": {
+                                    "user_profile": case_payload.get("user_profile", ""),
+                                    "initial_message": case_payload.get("initial_message", ""),
+                                    "expected_goals": case_payload.get("expected_goals", []),
+                                    "required_rules": case_payload.get("required_rules", []),
+                                    "forbidden_rules": case_payload.get("forbidden_rules", []),
+                                },
+                                "messages": recent_messages,
                                 "turn_index": turn_index,
+                                "memory_state": memory_state or {},
                                 "user_state": result["user_state"],
                                 "intent": result["intent"],
                                 "should_continue": result["should_continue"],
@@ -72,6 +84,7 @@ class UserSimulator:
         if user_state.get("goal_progress") != "rejected" and self._user_message_closes(result.get("content", "")):
             result["should_continue"] = False
             user_state["goal_progress"] = "accepted"
+        self._sync_metadata(result)
         return result
 
     def generate_next_message(
@@ -79,10 +92,11 @@ class UserSimulator:
         case_payload: Dict[str, Any],
         history: List[Dict[str, Any]],
         turn_index: int,
+        memory_state: Dict[str, Any] | None = None,
     ) -> Dict[str, Any]:
         """Backward-compatible entry point for older callers."""
 
-        return self.generate_message({}, case_payload, history, turn_index)
+        return self.generate_message({}, case_payload, history, turn_index, memory_state=memory_state)
 
     def _mock_turn(
         self,
@@ -377,7 +391,7 @@ class UserSimulator:
                 return "rider_weather"
             if self._has_any(text, ["反复追问", "没完成", "X 单", "影响"]):
                 return "rider_repeated"
-            if self._has_any(text, ["不想配送", "不想跑", "拒绝", "无法配送"]):
+            if self._has_any(text, ["不想干", "不干", "不想配送", "不想跑", "拒绝", "无法配送"]):
                 return "rider_reject"
             return "rider_willing"
 
@@ -587,12 +601,30 @@ class UserSimulator:
         return plan[index]
 
     def _pack(self, content: str, state: UserState, intent: str, should_continue: bool) -> Dict[str, Any]:
+        metadata = {
+            "intent": intent,
+            "emotion_level": state.emotion_level,
+            "patience": state.patience,
+            "should_continue": should_continue,
+            "branch_update": {},
+        }
         return {
             "content": content,
             "user_state": asdict(state),
             "intent": intent,
             "should_continue": should_continue,
+            "metadata": metadata,
         }
+
+    def _sync_metadata(self, result: Dict[str, Any]) -> None:
+        user_state = result.setdefault("user_state", {})
+        metadata = dict(result.get("metadata") or {})
+        metadata["intent"] = result.get("intent") or metadata.get("intent", "")
+        metadata["emotion_level"] = int(user_state.get("emotion_level") or metadata.get("emotion_level") or 1)
+        metadata["patience"] = int(user_state.get("patience") or metadata.get("patience") or 3)
+        metadata["should_continue"] = bool(result.get("should_continue", metadata.get("should_continue", True)))
+        metadata.setdefault("branch_update", {})
+        result["metadata"] = metadata
 
     def _default_initial(self, task_payload: Dict[str, Any], case_payload: Dict[str, Any]) -> str:
         task_type = self._task_type(task_payload, case_payload)

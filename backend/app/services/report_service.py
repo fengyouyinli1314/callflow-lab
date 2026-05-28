@@ -24,11 +24,13 @@ class ReportService:
         llm_result: Dict[str, Any],
         messages: List[Dict[str, Any]],
     ) -> EvaluationReport:
+        llm_result = self._filter_llm_result_to_active_rules(rule_result, llm_result)
         metrics = self._combine_metrics(rule_result, llm_result)
         score_formula = self._score_formula(metrics)
         evidence_messages = self._combine_evidence_messages(rule_result, llm_result, messages)
         failure_cases = self._combine_failure_cases(rule_result, llm_result)
         suggestions = self._combine_suggestions(rule_result, llm_result)
+        final_memory_state = self._final_memory_state(messages)
         metric_explanations = self._sync_metric_explanation_scores(
             rule_result.get("metric_explanations", []),
             metrics,
@@ -70,6 +72,7 @@ class ReportService:
                 "llm_judge_result": llm_result,
                 "llm_evidence": llm_result.get("evidence", []),
                 "score_formula": score_formula,
+                "memory_state": final_memory_state,
             },
             evidence_messages=evidence_messages,
             score_formula=score_formula,
@@ -80,14 +83,22 @@ class ReportService:
         self.session.refresh(report)
         return report
 
+    def _final_memory_state(self, messages: List[Dict[str, Any]]) -> Dict[str, Any]:
+        for item in reversed(messages):
+            detail = item.get("detail") or {}
+            memory_state = detail.get("memory_state") or detail.get("memoryState")
+            if isinstance(memory_state, dict) and memory_state:
+                return memory_state
+        return {}
+
     def _combine_metrics(self, rule_result: Dict[str, Any], llm_result: Dict[str, Any]) -> Dict[str, float]:
         combined = {}
         for field in METRIC_FIELDS:
-            rule_value = float(rule_result["metrics"][field])
-            llm_value = float(llm_result.get(field, rule_value))
+            rule_value = self._numeric_score(rule_result["metrics"][field])
+            llm_value = self._numeric_score(llm_result.get(field, rule_value), rule_value)
             combined[field] = round(rule_value * 0.7 + llm_value * 0.3, 2)
         combined["total_score"] = round(sum(combined[field] * SCORE_WEIGHTS[field] for field in METRIC_FIELDS), 2)
-        combined["failed_rule_count"] = float(rule_result["metrics"].get("failed_rule_count", 0))
+        combined["failed_rule_count"] = self._numeric_score(rule_result["metrics"].get("failed_rule_count", 0))
         combined["safety_compliance"] = combined["constraint_compliance"]
         return combined
 
@@ -126,6 +137,40 @@ class ReportService:
     def _combine_suggestions(self, rule_result: Dict[str, Any], llm_result: Dict[str, Any]) -> List[str]:
         values = list(rule_result.get("suggestions", [])) + list(llm_result.get("suggestions", []))
         return list(dict.fromkeys([item for item in values if item]))
+
+    def _filter_llm_result_to_active_rules(
+        self,
+        rule_result: Dict[str, Any],
+        llm_result: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        allowed = set(self._active_visible_rules(rule_result))
+        if not allowed:
+            return llm_result
+        filtered = dict(llm_result)
+        filtered["evidence"] = [
+            item
+            for item in llm_result.get("evidence", []) or []
+            if not isinstance(item, dict)
+            or str(item.get("issue") or item.get("rule_name") or "") in allowed
+            or "未发现" in str(item.get("issue") or "")
+        ]
+        filtered["failed_rules"] = [
+            rule for rule in llm_result.get("failed_rules", []) or [] if str(rule) in allowed
+        ]
+        filtered["active_visible_rules"] = sorted(allowed)
+        return filtered
+
+    def _active_visible_rules(self, rule_result: Dict[str, Any]) -> List[str]:
+        values = list(rule_result.get("active_rule_names") or [])
+        if not values:
+            visible = rule_result.get("visible_business_rules") or {}
+            values.extend(visible.get("matched") or [])
+            values.extend(visible.get("failed") or [])
+        if not values:
+            active = rule_result.get("active_rules") or {}
+            for key in ["global_rules", "stage_rules", "case_rules", "triggered_rules"]:
+                values.extend(active.get(key) or [])
+        return list(dict.fromkeys([str(item).strip() for item in values if str(item).strip()]))
 
     def _sync_metric_explanation_scores(
         self,
@@ -240,6 +285,22 @@ class ReportService:
     def _first_suggestion(self, llm_result: Dict[str, Any]) -> str:
         suggestions = llm_result.get("suggestions") or []
         return suggestions[0] if suggestions else "结合任务指令补齐缺失流程，并引用用户问题直接回应。"
+
+    def _numeric_score(self, value: Any, fallback: Any = 0) -> float:
+        if isinstance(value, dict):
+            for key in ["score", "value", "points", "分数"]:
+                if key in value:
+                    return self._numeric_score(value.get(key), fallback)
+            return self._numeric_score(fallback, 0)
+        if isinstance(value, (list, tuple)):
+            return self._numeric_score(value[0], fallback) if value else self._numeric_score(fallback, 0)
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            try:
+                return float(fallback)
+            except (TypeError, ValueError):
+                return 0.0
 
     def _llm_evidence_for_metric(self, metric_key: str, llm_result: Dict[str, Any]) -> List[Dict[str, Any]]:
         evidence = llm_result.get("evidence") or []

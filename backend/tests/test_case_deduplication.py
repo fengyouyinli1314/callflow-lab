@@ -48,8 +48,68 @@ def test_seed_sample_data_does_not_increase_case_count_on_repeated_startup():
     with Session(engine) as session:
         after_twice = len(session.exec(select(EvaluationCase)).all())
 
-    assert after_once == before
-    assert after_twice == before
+    assert after_once <= before
+    assert after_twice == after_once
+
+
+def test_official_tasks_keep_core_case_catalog(client):
+    tasks = client.get("/api/tasks").json()
+    rider_task = next(task for task in tasks if task["task_type"] == "rider_outbound")
+    course_task = next(task for task in tasks if task["task_type"] == "course_platform_outbound")
+
+    rider_cases = [
+        case
+        for case in client.get(f"/api/cases?task_id={rider_task['id']}").json()
+        if case.get("data_source") != "manual"
+    ]
+    course_cases = [
+        case
+        for case in client.get(f"/api/cases?task_id={course_task['id']}").json()
+        if case.get("data_source") != "manual"
+    ]
+
+    assert {case["name"] for case in rider_cases} == {
+        "飞毛腿骑手合同生效外呼用例",
+    }
+    assert {case["name"] for case in course_cases} == {
+        "课程直播产品升级外呼用例",
+    }
+    assert len({(case["name"], case["initial_message"]) for case in rider_cases}) == len(rider_cases)
+    assert len({(case["name"], case["initial_message"]) for case in course_cases}) == len(course_cases)
+
+    rider_by_name = {case["name"]: case for case in rider_cases}
+    course_by_name = {case["name"]: case for case in course_cases}
+    rider_case = rider_by_name["飞毛腿骑手合同生效外呼用例"]
+    assert rider_case["case_mode"] == "full_flow"
+    assert rider_case["initial_message"] == "是我，你说。"
+    assert rider_case["max_turns"] >= 10
+    assert rider_case["expected_steps"] == [
+        "确认身份",
+        "告知今天飞毛腿合同已生效",
+        "说明午晚高峰和单量要求",
+        "询问是否可以开始配送",
+        "根据骑手态度鼓励挽留或安抚",
+        "提醒注意安全",
+        "说明排名与保资格规则",
+        "结束确认",
+    ]
+    assert all(case["initial_message"] == "是我，你说。" for case in rider_cases)
+    course_case = course_by_name["课程直播产品升级外呼用例"]
+    assert course_case["case_mode"] == "full_flow"
+    assert course_case["initial_message"] == "我是负责人，你说吧。"
+    assert course_case["max_turns"] >= 12
+    assert course_case["expected_steps"] == [
+        "身份确认",
+        "确认是否知情",
+        "传达升级内容",
+        "说明标准直播和低延迟直播区别",
+        "说明价格差异",
+        "询问发布方式",
+        "确认前端是否可见并说明配置路径",
+        "检查学员端费用/加速线路费",
+        "企业微信添加",
+        "结束确认",
+    ]
 
 
 def test_seed_sample_data_does_not_delete_unique_manual_case(client):

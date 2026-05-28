@@ -24,7 +24,17 @@ class ReportRead(SQLModel):
     failed_rules: List[str]
     active_rules: Dict[str, Any]
     pending_rules: List[str]
+    untriggered_rules: List[str]
+    visible_business_rules: Dict[str, Any]
+    hidden_guardrail_rules: Dict[str, Any]
+    full_flow_expected_steps: Dict[str, Any]
+    late_satisfied_rules: List[str]
+    rule_lifecycle: Dict[str, Any]
+    case_focus: str
+    active_rule_names: List[str]
     current_stage: str
+    memory_state: Dict[str, Any]
+    deduction_reason: str
     active_rules_explanation: str
     llm_judge_result: Dict[str, Any]
     suggestions: List[str]

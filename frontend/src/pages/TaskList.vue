@@ -99,9 +99,10 @@ const openCreate = () => {
   assignForm()
   dialogVisible.value = true
 }
-const openEdit = (row) => {
+const openEdit = async (row) => {
   editing.value = row
-  assignForm(row)
+  const detail = await request.get(`/api/tasks/${row.id}`)
+  assignForm(detail)
   dialogVisible.value = true
 }
 const save = async () => {

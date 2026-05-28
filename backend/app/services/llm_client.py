@@ -212,7 +212,7 @@ class LLMClient:
             if any(keyword in scenario for keyword in ["下雨", "雨天", "天气"]):
                 return "安全第一，雨天单多，能跑有助保资格。"
             if any(keyword in scenario for keyword in ["没完成", "X 单", "X单", "影响"]):
-                return "单日需完成 X 单，否则合同和派单可能受影响。"
+                return "单日合同生效当天必须完成 X 单；多日合同每天必须完成 Y 单；未完成合同及派单可能受影响。"
             return "飞毛腿合同已生效，现在可以开始配送吗？"
 
         if any(keyword in scenario for keyword in ["课程", "直播", "低延迟", "负责人"]):

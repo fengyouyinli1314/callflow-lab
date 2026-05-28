@@ -24,6 +24,11 @@
             <el-option v-for="item in behaviorOptions" :key="item" :label="item" :value="item" />
           </el-select>
         </el-form-item>
+        <el-form-item label="用例模式" prop="case_mode">
+          <el-select v-model="form.case_mode" style="width: 100%">
+            <el-option v-for="item in caseModeOptions" :key="item.value" :label="item.label" :value="item.value" />
+          </el-select>
+        </el-form-item>
         <el-form-item label="最大轮数" prop="max_turns">
           <el-input-number v-model="form.max_turns" :min="1" :max="12" />
         </el-form-item>
@@ -68,6 +73,11 @@ const formRef = ref(null)
 const saving = ref(false)
 const difficultyOptions = ['简单', '中等', '困难']
 const behaviorOptions = ['正常配合', '拒绝配合', '情绪不满', '反复追问', '信息缺失', '超范围问题']
+const caseModeOptions = [
+  { label: '分支专项用例', value: 'branch' },
+  { label: '全流程覆盖用例', value: 'full_flow' },
+  { label: '异常终止用例', value: 'abnormal_exit' }
+]
 const form = reactive(emptyForm())
 const dialogTitle = computed(() => (props.caseData?.id ? '编辑测试用例' : '新增测试用例'))
 
@@ -79,6 +89,7 @@ const rules = {
   initial_message: [{ required: true, message: requiredMessage, trigger: 'blur' }],
   expected_goals_text: [{ required: true, message: '请至少填写一个测试目标', trigger: 'blur' }],
   user_behavior_type: [{ required: true, message: '请选择用户行为类型', trigger: 'change' }],
+  case_mode: [{ required: true, message: '请选择用例模式', trigger: 'change' }],
   max_turns: [{ required: true, message: '请选择最大轮数', trigger: 'change' }],
   difficulty: [{ required: true, message: '请选择难度', trigger: 'change' }],
   required_rules_text: [{ required: true, message: '请至少填写一条必须满足规则', trigger: 'blur' }],
@@ -100,6 +111,7 @@ function emptyForm() {
     trigger_conditions_text: '',
     expected_final_state: '',
     user_behavior_type: '正常配合',
+    case_mode: 'branch',
     difficulty: '中等',
     max_turns: 4,
     data_source: 'manual'
@@ -120,6 +132,7 @@ function resetForm() {
     trigger_conditions_text: toText(source.trigger_conditions),
     expected_final_state: source.expected_final_state || '',
     user_behavior_type: source.user_behavior_type || '正常配合',
+    case_mode: source.case_mode || 'branch',
     difficulty: source.difficulty || '中等',
     max_turns: source.max_turns || 4,
     data_source: source.data_source || 'manual'
@@ -150,6 +163,7 @@ function payload() {
     trigger_conditions: lines(form.trigger_conditions_text),
     expected_final_state: form.expected_final_state.trim(),
     user_behavior_type: form.user_behavior_type,
+    case_mode: form.case_mode || 'branch',
     difficulty: form.difficulty,
     max_turns: form.max_turns,
     data_source: form.data_source || 'manual'

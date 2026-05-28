@@ -35,7 +35,47 @@
             :title="section.title"
             :name="section.key"
           >
-            <div class="instruction-text">{{ section.value || '暂无内容' }}</div>
+            <ul v-if="section.type === 'constraints' && parsedConstraints.length" class="constraint-list">
+              <li v-for="item in parsedConstraints" :key="item">{{ item }}</li>
+            </ul>
+            <div v-else-if="section.type === 'steps' && parsedSteps.length" class="steps-list">
+              <div v-for="step in parsedSteps" :key="step.step_no || step.title" class="step-card">
+                <div class="step-title">
+                  <el-tag size="small">Step {{ step.step_no || '-' }}</el-tag>
+                  <strong>{{ step.title || '未命名步骤' }}</strong>
+                </div>
+                <div class="instruction-text compact">{{ step.content || '暂无解析结果' }}</div>
+                <div v-if="step.sub_steps?.length" class="sub-steps">
+                  <div v-for="sub in step.sub_steps" :key="sub.sub_step_no || sub.title" class="sub-step">
+                    <strong>{{ sub.sub_step_no }} {{ sub.title }}</strong>
+                    <p>{{ sub.content || '暂无解析结果' }}</p>
+                  </div>
+                </div>
+              </div>
+            </div>
+            <div v-else-if="section.type === 'policy' && parsedPolicy" class="policy-view">
+              <div class="policy-block">
+                <h3>reply_rules</h3>
+                <div class="policy-grid">
+                  <span v-for="(value, key) in parsedPolicy.reply_rules || {}" :key="key">
+                    <strong>{{ key }}</strong>
+                    <em>{{ value }}</em>
+                  </span>
+                </div>
+              </div>
+              <div
+                v-for="group in policyGroups"
+                :key="group.key"
+                class="policy-block"
+              >
+                <h3>{{ group.key }}</h3>
+                <div v-if="group.items.length" class="policy-items">
+                  <pre v-for="(item, index) in group.items" :key="`${group.key}-${index}`">{{ formatPolicyItem(item) }}</pre>
+                </div>
+                <div v-else class="instruction-text compact">暂无执行策略</div>
+              </div>
+            </div>
+            <div v-else class="instruction-text">{{ section.value || '暂无解析结果' }}</div>
           </el-collapse-item>
         </el-collapse>
       </div>
@@ -69,24 +109,70 @@
 
 <script setup>
 import { computed, onMounted, ref } from 'vue'
-import { useRoute } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import { Back } from '@element-plus/icons-vue'
 import request from '../api/request'
 
 const route = useRoute()
+const router = useRouter()
 const task = ref({})
 const cases = ref([])
-const activeSections = ref(['role', 'task', 'opening'])
+const activeSections = ref(['raw', 'role', 'task', 'opening'])
 
 const instructionSections = computed(() => [
+  { key: 'raw', title: '原始指令', value: task.value.instruction_text || task.value.system_instruction || '-' },
   { key: 'role', title: 'Role', value: task.value.role_text || fallbackInstruction('Role') },
   { key: 'task', title: 'Task', value: task.value.task_text || task.value.evaluation_goal || fallbackInstruction('Task') },
   { key: 'opening', title: 'Opening Line', value: task.value.opening_line || fallbackInstruction('Opening Line') },
-  { key: 'flow', title: 'Call Flow', value: task.value.call_flow || fallbackInstruction('Call Flow') || fallbackInstruction('Conversation Flow') },
+  { key: 'flow', title: 'Conversation Flow', value: task.value.conversation_flow || task.value.call_flow || fallbackInstruction('Call Flow') || fallbackInstruction('Conversation Flow') },
   { key: 'knowledge', title: 'Knowledge Points', value: task.value.knowledge_points || fallbackInstruction('Knowledge Points') || fallbackInstruction('FAQ') },
-  { key: 'constraints', title: 'Constraints', value: task.value.constraints || fallbackInstruction('Constraints') },
-  { key: 'raw', title: '完整原始指令', value: task.value.instruction_text || task.value.system_instruction || '-' }
+  { key: 'constraints', title: 'Constraints', type: 'constraints', value: parsedConstraints.value.join('\n') || fallbackInstruction('Constraints') },
+  { key: 'steps', title: 'Steps', type: 'steps', value: parsedSteps.value.length ? 'parsed' : '' },
+  { key: 'policy', title: '执行策略 executable_policy', type: 'policy', value: parsedPolicy.value ? 'parsed' : '暂无执行策略' }
 ])
+
+const parsedConstraints = computed(() => {
+  const parsed = parseJson(task.value.constraints)
+  if (Array.isArray(parsed)) return parsed.filter(Boolean)
+  const text = task.value.constraints || fallbackInstruction('Constraints')
+  return String(text || '')
+    .split('\n')
+    .map((line) => line.replace(/^[-*•]\s*/, '').trim())
+    .filter(Boolean)
+})
+
+const parsedSteps = computed(() => {
+  const parsed = parseJson(task.value.steps)
+  return Array.isArray(parsed) ? parsed : []
+})
+
+const parsedPolicy = computed(() => {
+  const parsed = parseJson(task.value.executable_policy)
+  return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : null
+})
+
+const policyGroups = computed(() => {
+  const policy = parsedPolicy.value || {}
+  return ['global_priority_rules', 'step_policies', 'branch_policies', 'forbidden_rules', 'memory_fields', 'examples'].map((key) => ({
+    key,
+    items: Array.isArray(policy[key]) ? policy[key] : []
+  }))
+})
+
+const parseJson = (value) => {
+  if (Array.isArray(value)) return value
+  if (!value || typeof value !== 'string') return null
+  try {
+    return JSON.parse(value)
+  } catch {
+    return null
+  }
+}
+
+const formatPolicyItem = (item) => {
+  if (typeof item === 'string') return item
+  return JSON.stringify(item, null, 2)
+}
 
 const fallbackInstruction = (heading) => {
   const text = task.value.instruction_text || task.value.system_instruction || ''
@@ -112,8 +198,13 @@ const hiddenRuleCount = (rules = []) => (Array.isArray(rules) && rules.length > 
 const hasRules = (row) => Boolean((row.required_rules || []).length || (row.forbidden_rules || []).length)
 
 onMounted(async () => {
-  task.value = await request.get(`/api/tasks/${route.params.id}`)
-  cases.value = await request.get(`/api/cases?task_id=${route.params.id}`)
+  const detail = await request.get(`/api/tasks/${encodeURIComponent(route.params.id)}`)
+  task.value = detail
+  const taskId = detail.id || route.params.id
+  if (String(route.params.id) !== String(taskId)) {
+    router.replace(`/tasks/${taskId}`)
+  }
+  cases.value = await request.get(`/api/cases?task_id=${taskId}`)
 })
 </script>
 
@@ -147,6 +238,25 @@ onMounted(async () => {
 
 .instruction-collapse {
   margin-top: 14px;
+  border-top: 1px solid var(--line);
+  border-bottom: 1px solid var(--line);
+}
+
+.instruction-collapse :deep(.el-collapse-item__header),
+.instruction-collapse :deep(.el-collapse-item__wrap),
+.instruction-collapse :deep(.el-collapse-item__content) {
+  background: rgba(15, 23, 42, 0.58);
+  color: var(--body-text);
+  border-bottom-color: var(--line);
+}
+
+.instruction-collapse :deep(.el-collapse-item__header) {
+  padding: 0 12px;
+  font-weight: 700;
+}
+
+.instruction-collapse :deep(.el-collapse-item__content) {
+  padding: 12px;
 }
 
 .instruction-text {
@@ -156,7 +266,122 @@ onMounted(async () => {
   word-break: break-word;
   line-height: 1.7;
   color: var(--body-text);
-  padding-right: 6px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: rgba(9, 15, 22, 0.72);
+}
+
+.instruction-text.compact {
+  max-height: 160px;
+  margin-top: 8px;
+}
+
+.constraint-list {
+  margin: 0;
+  padding: 12px 12px 12px 30px;
+  line-height: 1.8;
+  color: var(--body-text);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: rgba(9, 15, 22, 0.72);
+}
+
+.steps-list {
+  display: grid;
+  gap: 10px;
+}
+
+.step-card {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 12px;
+  background: rgba(255, 255, 255, 0.02);
+}
+
+.step-title {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.sub-steps {
+  display: grid;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.sub-step {
+  border-left: 2px solid var(--line);
+  padding-left: 10px;
+}
+
+.sub-step p {
+  margin: 6px 0 0;
+  white-space: pre-wrap;
+  color: var(--body-text);
+}
+
+.policy-view {
+  display: grid;
+  gap: 12px;
+}
+
+.policy-block {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 12px;
+  background: rgba(9, 15, 22, 0.72);
+}
+
+.policy-block h3 {
+  margin: 0 0 10px;
+  font-size: 14px;
+  color: var(--body-text);
+}
+
+.policy-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+  gap: 8px;
+}
+
+.policy-grid span,
+.policy-items pre {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: rgba(15, 23, 42, 0.72);
+}
+
+.policy-grid span {
+  display: grid;
+  gap: 4px;
+  padding: 10px;
+}
+
+.policy-grid strong {
+  color: var(--muted);
+}
+
+.policy-grid em {
+  font-style: normal;
+  color: var(--body-text);
+}
+
+.policy-items {
+  display: grid;
+  gap: 8px;
+}
+
+.policy-items pre {
+  max-height: 220px;
+  margin: 0;
+  overflow: auto;
+  padding: 10px;
+  white-space: pre-wrap;
+  color: var(--body-text);
+  font-family: inherit;
+  line-height: 1.6;
 }
 
 .case-rules {

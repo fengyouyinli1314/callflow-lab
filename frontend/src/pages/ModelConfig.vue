@@ -3,9 +3,17 @@
     <div class="page-header">
       <div>
         <h1>模型配置</h1>
-        <p>查看被测模型 provider 接入状态；mock_fallback 仅作本地兜底，API Key 只在后端环境变量中配置。</p>
+        <p>查看被测模型 provider 接入状态；mock_fallback 仅作演示兜底，不代表真实 AI，API Key 只在后端环境变量中配置。</p>
       </div>
       <el-button :icon="Refresh" @click="loadProviders">刷新</el-button>
+    </div>
+
+    <div class="panel provider-guidance">
+      <div>
+        <h2>真实模型接入说明</h2>
+        <p>mock_fallback 只用于无 API Key 或演示环境不可用时保证流程跑通；openai_compatible 和 custom_endpoint 才是真实模型接入方式。</p>
+      </div>
+      <el-tag type="info">API Key 不在前端保存</el-tag>
     </div>
 
     <div class="panel">
@@ -107,6 +115,24 @@ onMounted(loadProviders)
   flex-wrap: wrap;
 }
 
+.provider-guidance {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 16px;
+}
+
+.provider-guidance h2 {
+  margin: 0 0 6px;
+  font-size: 17px;
+}
+
+.provider-guidance p {
+  margin: 0;
+  color: var(--muted);
+}
+
 .provider-notes {
   margin-top: 16px;
 }
@@ -146,5 +172,12 @@ onMounted(loadProviders)
 .provider-meta strong {
   color: var(--body-text);
   word-break: break-word;
+}
+
+@media (max-width: 760px) {
+  .provider-guidance {
+    align-items: flex-start;
+    flex-direction: column;
+  }
 }
 </style>

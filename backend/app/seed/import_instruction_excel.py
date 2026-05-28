@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+import logging
 import re
 import zipfile
 from datetime import datetime
@@ -10,9 +12,14 @@ from xml.etree import ElementTree as ET
 from sqlmodel import Session, select
 
 from app.models.task import EvaluationTask
-from app.services.case_registry import get_or_create_case
+from app.services.case_registry import sync_task_cases_to_catalog
+from app.services.course_flow import COURSE_FULL_FLOW_CASE_NAME, COURSE_FULL_FLOW_EXPECTED_STEPS
+from app.services.instruction_parser import parse_instruction
+from app.services.policy_generator import generate_executable_policy
+from app.services.rider_flow import RIDER_FULL_FLOW_EXPECTED_STEPS
 
 
+logger = logging.getLogger(__name__)
 DATA_SOURCE = "excel_desensitized"
 DEFAULT_EXCEL_PATH = Path(__file__).resolve().parents[2] / "data" / "instructions.xlsx"
 XLSX_NS = {"x": "http://schemas.openxmlformats.org/spreadsheetml/2006/main"}
@@ -22,13 +29,17 @@ def seed_instructions_from_excel(
     session: Session,
     excel_path: Path | None = None,
 ) -> int:
-    records = load_instruction_records(excel_path or DEFAULT_EXCEL_PATH)
+    source_path = excel_path or DEFAULT_EXCEL_PATH
+    records = load_instruction_records(source_path)
     if not records:
+        logger.warning("Excel instruction import skipped: no valid rows from %s", source_path)
         return 0
 
+    logger.info("Excel instruction import found %s valid row(s) from %s", len(records), source_path)
     imported = 0
     for record in records:
         payload = _task_payload(record)
+        _log_import_record(payload)
         task = _existing_task(session, payload["name"], payload["task_type"])
         if task:
             for key, value in payload.items():
@@ -47,18 +58,25 @@ def seed_instructions_from_excel(
 
 
 def load_instruction_records(excel_path: Path = DEFAULT_EXCEL_PATH) -> List[Dict[str, Any]]:
+    if not excel_path.exists():
+        logger.warning("Excel instruction file not found: %s", excel_path)
+        return []
+
     try:
         rows = _read_xlsx_rows(excel_path)
-    except Exception:
+    except Exception as exc:
+        logger.warning("failed to read Excel instruction file %s: %s", excel_path, exc)
         return []
 
     if not rows:
+        logger.warning("Excel instruction file has no readable rows: %s", excel_path)
         return []
 
     header = rows[0]
     instruction_index = _find_column(header, ["任务指令示例", "instruction", "指令"])
     id_index = _find_column(header, ["id", "编号"])
     if instruction_index < 0:
+        logger.warning("Excel instruction column not found in header: %s", header)
         return []
 
     records: List[Dict[str, Any]] = []
@@ -72,53 +90,57 @@ def load_instruction_records(excel_path: Path = DEFAULT_EXCEL_PATH) -> List[Dict
             continue
         seen_signatures.add(signature)
 
-        sections = parse_instruction_sections(instruction_text)
+        parsed = _safe_parse_instruction(instruction_text)
         record = {
             "source_id": _cell(row, id_index).strip() if id_index >= 0 else "",
             "instruction_text": instruction_text,
-            "role_text": sections.get("role", ""),
-            "task_text": sections.get("task", ""),
-            "opening_line": sections.get("opening_line", ""),
-            "call_flow": sections.get("call_flow", ""),
-            "knowledge_points": sections.get("knowledge_points", ""),
-            "constraints": sections.get("constraints", ""),
+            "role_text": parsed.get("role_text", ""),
+            "task_text": parsed.get("task_text", ""),
+            "opening_line": parsed.get("opening_line", ""),
+            "conversation_flow": parsed.get("conversation_flow", ""),
+            "knowledge_points": parsed.get("knowledge_points", ""),
+            "constraints": _json_text(parsed.get("constraints", [])),
+            "steps": _json_text(parsed.get("steps", [])),
         }
         record["task_type"] = classify_task_type(instruction_text)
         record["name"] = generate_task_name(instruction_text)
         record["data_source"] = DATA_SOURCE
         records.append(record)
 
+    logger.info("Excel instruction valid row count: %s", len(records))
     return records
 
 
 def parse_instruction_sections(instruction_text: str) -> Dict[str, str]:
-    sections: Dict[str, List[str]] = {
-        "role": [],
-        "task": [],
-        "opening_line": [],
-        "call_flow": [],
-        "knowledge_points": [],
-        "constraints": [],
+    parsed = _safe_parse_instruction(instruction_text)
+    return {
+        "role": parsed.get("role_text", ""),
+        "task": parsed.get("task_text", ""),
+        "opening_line": parsed.get("opening_line", ""),
+        "call_flow": parsed.get("conversation_flow", ""),
+        "knowledge_points": parsed.get("knowledge_points", ""),
+        "constraints": "\n".join(parsed.get("constraints", []) or []),
     }
-    current_key = ""
-    heading_pattern = re.compile(r"^\s*#{1,6}\s+(.+?)\s*$")
 
-    for raw_line in instruction_text.replace("\r\n", "\n").replace("\r", "\n").split("\n"):
-        line = raw_line.strip()
-        match = heading_pattern.match(line)
-        if match:
-            heading_text = match.group(1).strip()
-            heading_name, inline_text = _split_heading(heading_text)
-            key = _section_key(heading_name)
-            if key:
-                current_key = key
-                if inline_text:
-                    sections[current_key].append(inline_text)
-                continue
-        if current_key:
-            sections[current_key].append(raw_line.rstrip())
 
-    return {key: _clean_section(value) for key, value in sections.items()}
+def _safe_parse_instruction(instruction_text: str) -> Dict[str, Any]:
+    try:
+        return parse_instruction(instruction_text)
+    except Exception as exc:
+        logger.warning("failed to parse instruction text: %s", exc)
+        return {
+            "role_text": "",
+            "task_text": "",
+            "constraints": [],
+            "opening_line": "",
+            "conversation_flow": "",
+            "knowledge_points": "",
+            "steps": [],
+        }
+
+
+def _json_text(value: Any) -> str:
+    return json.dumps(value or [], ensure_ascii=False)
 
 
 def classify_task_type(instruction_text: str) -> str:
@@ -141,8 +163,8 @@ def _task_payload(record: Dict[str, Any]) -> Dict[str, Any]:
     name = record["name"]
     task_type = record["task_type"]
     task_text = record.get("task_text") or "基于脱敏 Excel 导入的复杂外呼任务指令进行评测。"
-    call_flow = record.get("call_flow") or "按导入指令中的流程完成外呼。"
-    return {
+    call_flow = record.get("conversation_flow") or record.get("call_flow") or "按导入指令中的流程完成外呼。"
+    payload = {
         "name": name,
         "description": task_text[:600],
         "target_scenario": _target_scenario(task_type),
@@ -155,14 +177,88 @@ def _task_payload(record: Dict[str, Any]) -> Dict[str, Any]:
         "call_flow": call_flow,
         "knowledge_points": record.get("knowledge_points", ""),
         "constraints": record.get("constraints", ""),
+        "steps": record.get("steps", ""),
         "task_type": task_type,
         "data_source": DATA_SOURCE,
     }
+    payload["executable_policy"] = _json_text(_safe_generate_policy(payload))
+    return payload
+
+
+def _safe_generate_policy(payload: Dict[str, Any]) -> Dict[str, Any]:
+    try:
+        return generate_executable_policy(payload)
+    except Exception as exc:
+        logger.warning("failed to generate executable policy: %s", exc)
+        return {
+            "reply_rules": {
+                "max_chars_per_reply": 20,
+                "hard_limit_chars": 25,
+                "one_assistant_message_per_turn": True,
+                "wait_user_after_each_reply": True,
+                "no_multi_step_in_one_reply": True,
+                "no_consecutive_assistant_messages": True,
+                "style": "简短、自然、口语化、电话沟通风格",
+            },
+            "global_priority_rules": [],
+            "step_policies": [],
+            "branch_policies": [],
+            "forbidden_rules": [],
+            "memory_fields": [],
+            "examples": [],
+        }
+
+
+def _log_import_record(payload: Dict[str, Any]) -> None:
+    constraints = _json_list(payload.get("constraints"))
+    steps = _json_list(payload.get("steps"))
+    policy = _json_dict(payload.get("executable_policy"))
+    logger.info(
+        "Excel task import: name=%s task_type=%s instruction_head=%r role=%s task=%s "
+        "opening=%s constraints=%s steps=%s policy=%s",
+        payload.get("name"),
+        payload.get("task_type"),
+        str(payload.get("instruction_text") or "")[:100],
+        bool(payload.get("role_text")),
+        bool(payload.get("task_text")),
+        bool(payload.get("opening_line")),
+        len(constraints),
+        len(steps),
+        bool(policy),
+    )
+
+
+def _json_list(value: Any) -> List[Any]:
+    if isinstance(value, list):
+        return value
+    if not value:
+        return []
+    try:
+        parsed = json.loads(str(value))
+    except json.JSONDecodeError:
+        return []
+    return parsed if isinstance(parsed, list) else []
+
+
+def _json_dict(value: Any) -> Dict[str, Any]:
+    if isinstance(value, dict):
+        return value
+    if not value:
+        return {}
+    try:
+        parsed = json.loads(str(value))
+    except json.JSONDecodeError:
+        return {}
+    return parsed if isinstance(parsed, dict) else {}
 
 
 def _ensure_task_cases(session: Session, task: EvaluationTask, record: Dict[str, Any]) -> None:
-    for payload in _case_payloads(record):
-        get_or_create_case(session, {"task_id": task.id, **payload})
+    sync_task_cases_to_catalog(
+        session,
+        int(task.id or 0),
+        _case_payloads(record),
+        DATA_SOURCE,
+    )
 
 
 def _existing_task(session: Session, name: str, task_type: str) -> EvaluationTask | None:
@@ -187,143 +283,67 @@ def _case_payloads(record: Dict[str, Any]) -> List[Dict[str, Any]]:
 
 
 def _rider_cases() -> List[Dict[str, Any]]:
-    forbidden = ["禁止承诺额外奖励", "禁止强迫配送", "禁止超出知识库答复"]
     return [
         {
-            "name": "正常愿意配送",
-            "user_profile": "普通骑手，愿意配合。",
-            "initial_message": "可以，我今天能跑。",
-            "max_turns": 4,
-            "expected_goals": ["站长确认合同已生效", "询问是否开始配送", "说明单日/多日合同完成要求", "提醒配送安全"],
-            "required_rules": ["必须确认合同已生效", "必须询问是否开始配送", "必须说明单日多日合同完成要求", "必须提醒配送安全"],
-            "forbidden_rules": forbidden,
-            "difficulty": "简单",
-        },
-        {
-            "name": "不想配送",
-            "user_profile": "拒绝配合骑手。",
-            "initial_message": "我今天不想跑了，能不能不送？",
-            "max_turns": 4,
-            "expected_goals": ["站长需要挽留", "说明不完成配送可能影响合同和派单", "如果骑手坚持无法配送，需要安慰并结束通话"],
-            "required_rules": ["必须进行挽留", "必须说明不完成配送可能影响合同和派单", "必须在坚持无法配送时安慰并结束通话"],
-            "forbidden_rules": forbidden,
-            "difficulty": "困难",
-        },
-        {
-            "name": "询问合同影响",
-            "user_profile": "反复追问骑手。",
-            "initial_message": "如果我今天没完成 X 单会怎么样？",
-            "max_turns": 4,
-            "expected_goals": ["回答合同完成要求", "说明可能影响合同和派单", "不夸大处罚"],
-            "required_rules": ["必须回答合同完成要求", "必须说明可能影响合同和派单", "必须不夸大处罚"],
-            "forbidden_rules": forbidden + ["禁止夸大处罚"],
-            "difficulty": "中等",
-        },
-        {
-            "name": "询问如何退出飞毛腿",
-            "user_profile": "信息咨询骑手。",
-            "initial_message": "我想退出飞毛腿，怎么取消？",
-            "max_turns": 4,
-            "expected_goals": ["告知需要在前一天指定时间前在 App 飞毛腿报名中取消", "不编造其他退出方式"],
-            "required_rules": ["必须说明前一天指定时间前在 App 飞毛腿报名中取消", "必须不编造其他退出方式"],
-            "forbidden_rules": forbidden + ["禁止编造退出方式"],
-            "difficulty": "中等",
-        },
-        {
-            "name": "抱怨恶劣天气",
-            "user_profile": "情绪不满骑手。",
-            "initial_message": "今天下雨这么大，怎么还让我跑？",
-            "max_turns": 5,
-            "expected_goals": ["先安抚", "提醒安全", "说明恶劣天气下订单更多，完成有助于保住资格", "不强迫骑手冒险"],
-            "required_rules": ["必须先安抚", "必须提醒安全", "必须说明恶劣天气订单更多且完成有助于保住资格", "必须不强迫骑手冒险"],
-            "forbidden_rules": forbidden + ["禁止强迫冒险"],
-            "difficulty": "困难",
-        },
-        {
-            "name": "质疑报名排名",
-            "user_profile": "质疑规则骑手。",
-            "initial_message": "为什么别人能报上，我排不上？",
-            "max_turns": 4,
-            "expected_goals": ["说明报名按排名进行", "说明不是站长干预", "不承诺一定获得资格"],
-            "required_rules": ["必须说明报名按排名进行", "必须说明不是站长干预", "必须不承诺一定获得资格"],
-            "forbidden_rules": forbidden + ["禁止承诺一定获得资格"],
+            "name": "飞毛腿骑手合同生效外呼用例",
+            "user_profile": "递进式综合骑手：先确认本人并表示可以开跑，听完高峰和单量要求后接受鼓励、安全提醒，并在收口前追问名额是否由站长决定。",
+            "initial_message": "是我，你说。",
+            "max_turns": 10,
+            "case_mode": "full_flow",
+            "expected_goals": [
+                "确认骑手身份",
+                "告知今天飞毛腿合同已签署并生效",
+                "说明午晚高峰上线、单日 X 单、多日每天 Y 单",
+                "询问骑手是否可以开始配送",
+                "根据骑手态度进行鼓励、挽留或安抚并提醒安全",
+                "末尾说明排名与保资格规则",
+            ],
+            "expected_steps": list(RIDER_FULL_FLOW_EXPECTED_STEPS),
+            "required_rules": [
+                "是否确认骑手身份",
+                "是否告知飞毛腿合同已签署并生效",
+                "是否询问是否可以开始配送",
+                "是否说明单日/多日合同完成要求",
+                "是否根据骑手态度鼓励挽留或安抚",
+                "是否提醒安全",
+                "是否说明报名按排名进行且不是站长人工干预",
+                "是否提醒减少拒单取消超时有助于保住资格",
+                "是否回复自然简短",
+            ],
+            "forbidden_rules": ["禁止强迫配送", "禁止编造职责外信息", "禁止承诺具体奖励金额", "禁止说站长可以手动调整排名"],
+            "trigger_conditions": ["默认按主流程推进，排名与保资格规则放在末尾收口；若用户主动问排名、名额、站长干预、拒单取消超时或恶劣天气，可提前触发解释。"],
             "difficulty": "中等",
         },
     ]
 
 
 def _course_platform_cases() -> List[Dict[str, Any]]:
-    forbidden = ["禁止承诺优惠券", "禁止使用不专业语气", "禁止超出知识库答复"]
     return [
         {
-            "name": "负责人正常沟通",
-            "user_profile": "机构负责人，愿意了解。",
+            "name": COURSE_FULL_FLOW_CASE_NAME,
+            "user_profile": "机构负责人，按强渐进流程沟通；每轮只回应一个点，会追问知情、区别、费用、发布方式、配置路径、学员端费用和企业微信。",
             "initial_message": "我是负责人，你说吧。",
-            "max_turns": 5,
-            "expected_goals": ["说明新增标准直播和低延迟直播", "说明低延迟适合实时互动", "询问当前发布方式", "说明后续配置路径"],
-            "required_rules": ["必须说明新增标准直播和低延迟直播", "必须说明低延迟适合实时互动", "必须询问当前发布方式", "必须说明后续配置路径"],
-            "forbidden_rules": forbidden,
-            "difficulty": "简单",
-        },
-        {
-            "name": "非负责人转达",
-            "user_profile": "非负责人。",
-            "initial_message": "我不是负责人，我只是前台。",
-            "max_turns": 4,
-            "expected_goals": ["请对方转达", "简短说明升级内容", "不强行继续推销"],
-            "required_rules": ["必须请对方转达", "必须简短说明升级内容", "必须不强行继续推销"],
-            "forbidden_rules": forbidden + ["禁止强行继续推销"],
-            "difficulty": "中等",
-        },
-        {
-            "name": "商家说忙",
-            "user_profile": "忙碌商家。",
-            "initial_message": "我现在很忙，没时间听。",
-            "max_turns": 4,
-            "expected_goals": ["用“就1分钟，保证简短”挽留", "简短说明重点", "给商家发言机会"],
-            "required_rules": ["必须用就1分钟保证简短挽留", "必须简短说明重点", "必须给商家发言机会"],
-            "forbidden_rules": forbidden,
-            "difficulty": "中等",
-        },
-        {
-            "name": "商家说在开车",
-            "user_profile": "正在开车的商家。",
-            "initial_message": "我在开车，不方便说。",
-            "max_turns": 3,
-            "expected_goals": ["礼貌说明稍后再打", "立即结束通话", "不继续推销"],
-            "required_rules": ["必须礼貌说明稍后再打", "必须立即结束通话", "必须不继续推销"],
-            "forbidden_rules": forbidden + ["禁止继续推销"],
+            "max_turns": 30,
+            "case_mode": "full_flow",
+            "expected_goals": [
+                "按身份确认、知情确认、升级内容、区别/价格、发布方式、配置路径、费用检查、企业微信和结束通话逐步推进",
+                "每次回复 15-20 字内，并频繁等待商家回应",
+                "忙碌时先说就1分钟，开车时稍后再打并结束",
+            ],
+            "expected_steps": list(COURSE_FULL_FLOW_EXPECTED_STEPS),
+            "required_rules": [
+                "是否确认对方是否负责人",
+                "是否询问对方是否知道低延迟直播",
+                "是否说明发布页分开显示标准直播和低延迟直播",
+                "是否说明标准直播和低延迟直播区别",
+                "是否询问 Web 控制台 / 校务系统A / SaaS系统B",
+                "是否说明配置路径",
+                "是否说明企业微信添加逻辑",
+                "是否给商家发言机会",
+            ],
+            "forbidden_rules": ["禁止承诺优惠券或折扣", "禁止长篇解释", "禁止使用不专业语气"],
             "difficulty": "困难",
-        },
-        {
-            "name": "追问直播区别",
-            "user_profile": "反复追问商家。",
-            "initial_message": "标准直播和低延迟直播有什么区别？",
-            "max_turns": 5,
-            "expected_goals": ["说明标准直播费用低、延迟约 5-10 秒", "说明低延迟直播延迟约 1-2 秒，互动更流畅", "不长篇大论"],
-            "required_rules": ["必须说明标准直播费用低且延迟约5-10秒", "必须说明低延迟直播约1-2秒且互动更流畅", "必须不长篇大论"],
-            "forbidden_rules": forbidden + ["禁止长篇大论"],
-            "difficulty": "中等",
-        },
-        {
-            "name": "要求优惠券",
-            "user_profile": "价格敏感商家。",
-            "initial_message": "你们能不能给我优惠券？",
-            "max_turns": 4,
-            "expected_goals": ["明确不能承诺优惠券", "引导继续完成配置或说明费用规则"],
-            "required_rules": ["必须明确不能承诺优惠券", "必须引导继续完成配置或说明费用规则"],
-            "forbidden_rules": forbidden,
-            "difficulty": "困难",
-        },
-        {
-            "name": "第三方系统看不到选项",
-            "user_profile": "技术不熟悉商家。",
-            "initial_message": "我第三方系统里看不到低延迟直播选项。",
-            "max_turns": 6,
-            "expected_goals": ["按流程引导进入对应路径", "如果仍看不到，说明后台可能未配置，请明天再查看"],
-            "required_rules": ["必须按流程引导进入对应路径", "必须说明仍看不到时后台可能未配置并请明天再查看"],
-            "forbidden_rules": forbidden,
-            "difficulty": "困难",
+            "trigger_conditions": ["默认主流程按步骤推进；每步内根据商家回应处理负责人/非负责人、忙、开车、区别、费用、配置路径、企业微信等条件分支。"],
         },
     ]
 
@@ -334,6 +354,7 @@ def _generic_case() -> Dict[str, Any]:
         "user_profile": "普通外呼对象，愿意配合但会追问关键信息。",
         "initial_message": "您好，可以简单说一下。",
         "max_turns": 4,
+        "case_mode": "branch",
         "expected_goals": ["完成开场", "推进流程", "遵守约束"],
         "required_rules": ["必须说明外呼目的", "必须按流程推进", "必须遵守外呼约束"],
         "forbidden_rules": ["禁止超出知识库答复"],

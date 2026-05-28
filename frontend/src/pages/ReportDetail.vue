@@ -95,6 +95,54 @@
     </div>
 
     <div class="panel report-section">
+      <div class="panel-title"><h2>上下文记忆</h2></div>
+      <p class="active-rules-note">{{ memorySummary }}</p>
+      <div v-if="memoryRows.length" class="formula-grid">
+        <div v-for="item in memoryRows" :key="item.key" class="formula-item">
+          <span>{{ item.label }}</span>
+          <strong>{{ item.value }}</strong>
+          <small>{{ item.note }}</small>
+        </div>
+      </div>
+      <el-empty v-else description="暂无上下文记忆快照" />
+    </div>
+
+    <div class="panel report-section">
+      <div class="panel-title"><h2>知识引用与使用评估</h2></div>
+      <div class="knowledge-assessment">
+        <div>
+          <label>模型是否正确使用知识</label>
+          <p>{{ knowledgeUsageSummary }}</p>
+        </div>
+        <div v-if="knowledgeMissed.length">
+          <label>未使用相关知识的扣分原因</label>
+          <p v-for="item in knowledgeMissed" :key="`missed-knowledge-${item.title}`">
+            {{ item.title }}：{{ item.reason || '召回了相关知识，但模型回复未稳定体现关键事实。' }}
+          </p>
+        </div>
+        <div v-if="knowledgeFabricated.length">
+          <label>疑似编造知识库外内容</label>
+          <p v-for="item in knowledgeFabricated" :key="`fabricated-${item.term || item.reason}`">
+            {{ item.term || '风险内容' }}：{{ item.reason || '疑似补充知识库外承诺或处理方式。' }}
+          </p>
+        </div>
+      </div>
+      <el-divider />
+      <div v-if="knowledgeTurnRows.length" class="knowledge-turn-list">
+        <div v-for="row in knowledgeTurnRows" :key="row.key" class="knowledge-turn-row">
+          <strong>第 {{ row.turnIndex }} 轮</strong>
+          <div v-if="row.refs.length" class="finding-list">
+            <el-tag v-for="ref in row.refs" :key="`${row.key}-${ref.title}`" :type="ref.used ? 'success' : 'warning'">
+              {{ ref.type }}：{{ ref.title }}{{ ref.used ? '（已使用）' : '（待补充）' }}
+            </el-tag>
+          </div>
+          <p v-else class="muted">本轮未引用知识库</p>
+        </div>
+      </div>
+      <el-empty v-else description="暂无知识引用记录" />
+    </div>
+
+    <div class="panel report-section">
       <div class="panel-title"><h2>指标详解</h2></div>
       <el-empty v-if="!metricRows.length" description="暂无详细评分证据" />
       <el-table v-else :data="metricRows">
@@ -204,6 +252,42 @@ const activeRulesExplanation = computed(
     '本轮仅对当前流程阶段和用户已触发的问题进行评分，后续流程规则暂不扣分。未进入的后续流程不参与当前轮扣分。'
 )
 const notApplicableRules = computed(() => activeRules.value.not_applicable_rules || activeRules.value.notApplicableRules || [])
+const knowledgeAssessment = computed(() => llmJudgeResult.value.knowledge_assessment || llmJudgeResult.value.knowledgeAssessment || {})
+const knowledgeMissed = computed(() => knowledgeAssessment.value.missed_knowledge || knowledgeAssessment.value.missedKnowledge || [])
+const knowledgeFabricated = computed(() => knowledgeAssessment.value.fabricated_knowledge || knowledgeAssessment.value.fabricatedKnowledge || [])
+const usedKnowledgeTitles = computed(() => new Set(knowledgeAssessment.value.used_knowledge || knowledgeAssessment.value.usedKnowledge || []))
+const retrievedKnowledgeTitles = computed(() => knowledgeAssessment.value.retrieved_titles || knowledgeAssessment.value.retrievedTitles || [])
+const knowledgeUsageSummary = computed(() => {
+  if (!retrievedKnowledgeTitles.value.length) return '本次报告没有记录知识召回。'
+  if (!knowledgeMissed.value.length && !knowledgeFabricated.value.length) return '模型已使用本次召回的关键知识，未发现明显知识外编造。'
+  if (knowledgeMissed.value.length && knowledgeFabricated.value.length) return '模型存在未使用相关知识和疑似知识外编造，需要补齐。'
+  if (knowledgeMissed.value.length) return '模型存在已召回但未稳定使用的关键知识。'
+  return '模型存在疑似知识库外内容。'
+})
+const knowledgeTypeLabel = (type) => {
+  const labels = {
+    opening: 'Opening',
+    flow: 'Flow',
+    faq: 'FAQ',
+    constraint: 'Constraint'
+  }
+  return labels[type] || type || 'Knowledge'
+}
+const knowledgeTurnRows = computed(() =>
+  (report.value.messages || []).map((item, index) => {
+    const detail = item.detail || {}
+    const refs = (detail.retrieved_knowledge || detail.retrievedKnowledge || []).map((chunk) => ({
+      title: chunk.title || '未命名知识',
+      type: knowledgeTypeLabel(chunk.chunk_type || chunk.chunkType),
+      used: usedKnowledgeTitles.value.has(chunk.title)
+    }))
+    return {
+      key: item.id || `knowledge-turn-${index}`,
+      turnIndex: item.turn_index ?? item.turnIndex ?? index + 1,
+      refs
+    }
+  })
+)
 const scoreFormula = computed(() => {
   const formula = report.value.score_formula || report.value.explainability?.score_formula || {}
   return {
@@ -220,6 +304,44 @@ const scoreFormula = computed(() => {
       response_quality: 0.1
     }
   }
+})
+
+const memoryState = computed(() => report.value.memory_state || report.value.memoryState || report.value.explainability?.memory_state || {})
+const memorySummary = computed(() => memoryState.value.summary || 'memory_state 仅记录当前 run 内的阶段、分支、模型表现和待覆盖事项。')
+const memoryRows = computed(() => {
+  const memory = memoryState.value || {}
+  const flow = memory.flow_memory || memory.flowMemory || {}
+  const branch = memory.user_branch_memory || memory.userBranchMemory || {}
+  const performance = memory.model_performance_memory || memory.modelPerformanceMemory || {}
+  const unfinished = memory.unfinished_items_memory || memory.unfinishedItemsMemory || {}
+  if (!Object.keys(memory).length) return []
+  const rows = [
+    {
+      key: 'stage',
+      label: '当前阶段',
+      value: flow.current_stage || '-',
+      note: `已覆盖 ${flow.covered_steps?.length || 0} / 待覆盖 ${flow.pending_steps?.length || 0}`
+    },
+    {
+      key: 'branch',
+      label: '用户分支',
+      value: branch.publish_method || branch.delivery_attitude || branch.awareness || '-',
+      note: branch.busy ? '用户忙，需要简短处理' : branch.driving ? '用户开车，应稍后再打' : '按当前用例分支推进'
+    },
+    {
+      key: 'performance',
+      label: '模型表现',
+      value: `打断 ${performance.interrupted_turns?.length || 0}`,
+      note: `啰嗦 ${performance.verbose_turns?.length || 0} / 重复 ${performance.repeated_turns?.length || 0}`
+    },
+    {
+      key: 'next',
+      label: '下一步',
+      value: unfinished.next_suggested_step || '-',
+      note: unfinished.next_user_prompt || '无待推进事项'
+    }
+  ]
+  return rows
 })
 
 const formulaComponents = computed(() =>
@@ -415,6 +537,44 @@ onMounted(async () => {
 
 .not-applicable-collapse {
   margin-top: 14px;
+}
+
+.knowledge-assessment {
+  display: grid;
+  gap: 12px;
+}
+
+.knowledge-assessment label {
+  display: block;
+  color: var(--muted);
+  font-size: 12px;
+  margin-bottom: 6px;
+}
+
+.knowledge-assessment p {
+  margin: 0;
+  line-height: 1.6;
+}
+
+.knowledge-assessment p + p {
+  margin-top: 6px;
+}
+
+.knowledge-turn-list {
+  display: grid;
+  gap: 12px;
+}
+
+.knowledge-turn-row {
+  display: grid;
+  gap: 8px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid var(--line);
+}
+
+.knowledge-turn-row:last-child {
+  padding-bottom: 0;
+  border-bottom: 0;
 }
 
 @media (max-width: 1100px) {

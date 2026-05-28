@@ -16,6 +16,7 @@ class EvaluationRun(SQLModel, table=True):
     total_score: float = Field(default=0)
     model_provider: str = Field(default="mock_fallback", max_length=80)
     model_name: str = Field(default="mock_fallback", max_length=120)
+    memory_state: Dict[str, Any] = Field(default_factory=dict, sa_column=Column(JSON))
     created_at: datetime = Field(default_factory=datetime.utcnow)
     finished_at: Optional[datetime] = None
 

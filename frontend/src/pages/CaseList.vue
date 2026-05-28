@@ -22,6 +22,11 @@
         <el-table-column prop="user_profile" label="用户画像" min-width="220" show-overflow-tooltip />
         <el-table-column prop="initial_message" label="初始问题" min-width="260" show-overflow-tooltip />
         <el-table-column prop="difficulty" label="难度" width="90" />
+        <el-table-column label="模式" width="120">
+          <template #default="{ row }">
+            <el-tag type="info">{{ caseModeLabel(row.case_mode) }}</el-tag>
+          </template>
+        </el-table-column>
         <el-table-column prop="max_turns" label="最大轮数" width="100" />
         <el-table-column label="必须满足规则" min-width="260">
           <template #default="{ row }">
@@ -94,6 +99,11 @@
         <el-table-column prop="user_profile" label="用户画像" min-width="150" show-overflow-tooltip />
         <el-table-column prop="initial_message" label="初始问题" min-width="240" show-overflow-tooltip />
         <el-table-column prop="difficulty" label="难度" width="82" />
+        <el-table-column label="模式" width="120">
+          <template #default="{ row }">
+            <el-tag type="info">{{ caseModeLabel(row.case_mode) }}</el-tag>
+          </template>
+        </el-table-column>
         <el-table-column prop="max_turns" label="轮数" width="72" />
         <el-table-column label="期望目标" min-width="240">
           <template #default="{ row }">
@@ -149,6 +159,12 @@ const savingGenerated = ref(false)
 const generatedDrafts = ref([])
 const difficultyOptions = ['简单', '中等', '困难']
 const behaviorOptions = ['正常配合', '拒绝配合', '情绪不满', '反复追问', '信息缺失', '超范围问题']
+const caseModeLabels = {
+  branch: '分支专项用例',
+  full_flow: '全流程覆盖用例',
+  abnormal_exit: '异常终止用例'
+}
+const caseModeLabel = (mode) => caseModeLabels[mode] || caseModeLabels.branch
 const generateForm = reactive({
   task_id: null,
   case_count: 6,
@@ -276,6 +292,7 @@ const saveGeneratedDrafts = async () => {
         required_rules: draft.required_rules || [],
         forbidden_rules: draft.forbidden_rules || [],
         difficulty: draft.difficulty || '中等',
+        case_mode: draft.case_mode || 'branch',
         trigger_conditions: draft.trigger_conditions || [],
         expected_final_state: draft.expected_final_state || '',
         user_behavior_type: draft.user_behavior_type || '正常配合',

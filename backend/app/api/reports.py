@@ -44,6 +44,13 @@ def _serialize_report(report: EvaluationReport) -> Dict[str, Any]:
     metric_explanations = report.metric_explanations or _metric_explanations_from_details(metric_details)
     explainability = report.explainability or {}
     score_formula = report.score_formula or explainability.get("score_formula") or _fallback_score_formula(report)
+    active_rules = report.active_rules or explainability.get("active_rules", {})
+    untriggered_rules = (
+        active_rules.get("untriggered_rules")
+        or active_rules.get("not_applicable_rules")
+        or explainability.get("untriggered_rules")
+        or []
+    )
     return {
         "report_id": report.report_id,
         "run_id": report.run_id,
@@ -62,13 +69,23 @@ def _serialize_report(report: EvaluationReport) -> Dict[str, Any]:
         "total_turns": report.total_turns,
         "matched_rules": report.matched_rules or [],
         "failed_rules": report.failed_rules or [],
-        "active_rules": report.active_rules or explainability.get("active_rules", {}),
+        "active_rules": active_rules,
         "pending_rules": report.pending_rules or explainability.get("pending_rules", []),
+        "untriggered_rules": untriggered_rules,
+        "visible_business_rules": explainability.get("visible_business_rules", {}),
+        "hidden_guardrail_rules": explainability.get("hidden_guardrail_rules", {}),
+        "full_flow_expected_steps": explainability.get("full_flow_expected_steps", {}),
+        "late_satisfied_rules": explainability.get("late_satisfied_rules", []),
+        "rule_lifecycle": explainability.get("rule_lifecycle", {}),
+        "case_focus": explainability.get("case_focus", active_rules.get("case_focus", "")),
+        "active_rule_names": explainability.get("active_rule_names", active_rules.get("active_rule_names", [])),
         "current_stage": report.current_stage or explainability.get("current_stage", ""),
+        "memory_state": explainability.get("memory_state", {}),
+        "deduction_reason": explainability.get("deduction_reason", ""),
         "active_rules_explanation": report.active_rules_explanation
         or explainability.get(
             "active_rules_explanation",
-            "本轮仅对当前流程阶段和用户已触发的问题进行评分，未进入的后续流程不参与当前轮扣分。",
+            "本轮仅对当前用例、当前阶段和用户已触发规则评分。",
         ),
         "llm_judge_result": report.llm_judge_result or explainability.get("llm_judge_result", {}),
         "suggestions": report.suggestions or explainability.get("improvement_suggestions", []),

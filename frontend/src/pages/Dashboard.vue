@@ -34,6 +34,20 @@
       </div>
     </div>
 
+    <div class="panel agent-workflow-panel">
+      <div class="panel-title">
+        <h2>Agent 评测工作流</h2>
+        <span class="muted">Agent 编排 + 轻量 RAG + LLM-as-a-Judge</span>
+      </div>
+      <div class="agent-flow">
+        <div v-for="(item, index) in agentWorkflow" :key="item.title" class="agent-flow-item">
+          <span class="agent-step-index">{{ index + 1 }}</span>
+          <strong>{{ item.title }}</strong>
+          <p>{{ item.description }}</p>
+        </div>
+      </div>
+    </div>
+
     <div class="grid two dashboard-charts">
       <div class="panel">
         <div class="panel-title">
@@ -112,10 +126,19 @@ const failureData = computed(() => summary.value.failed_rules_top5 || [])
 const recentBatches = computed(() => summary.value.recent_batches || [])
 const aiCapabilities = [
   { title: '用户模拟器 Agent', description: '根据任务指令、用户画像和历史对话动态生成被外呼对象发言。' },
+  { title: 'Knowledge Retriever', description: '根据用户本轮问题召回官方知识点，辅助回复和评估。' },
   { title: 'LLM-as-a-Judge 自动评估', description: '结合任务规则、对话证据和指标公式给出语义级评分。' },
   { title: '真实被测模型接入', description: '通过 openai_compatible 或 custom_endpoint 接入外部模型服务。' },
-  { title: 'AI 辅助生成测试用例', description: '围绕复杂任务指令构造多轮测试场景和约束覆盖。' },
   { title: '可解释评测报告', description: '输出分数、规则命中、失败证据、扣分原因和优化建议。' }
+]
+const agentWorkflow = [
+  { title: '任务指令解析', description: '解析任务、用例、目标和约束。' },
+  { title: '知识召回', description: '召回 Opening、Flow、FAQ 与 Constraints。' },
+  { title: '用户模拟器 Agent', description: '动态生成被外呼对象的多轮行为。' },
+  { title: '被测模型 Agent', description: '通过 provider 生成被测回复。' },
+  { title: '规则裁判', description: '检查硬规则、串场和流程覆盖。' },
+  { title: 'Judge Agent', description: '给出语义评分、证据和建议。' },
+  { title: '报告生成 Agent', description: '汇总量化指标和可解释报告。' }
 ]
 
 const statusLabel = (status) => {
@@ -232,6 +255,7 @@ onBeforeUnmount(() => {
 
 <style scoped>
 .ai-capability-panel,
+.agent-workflow-panel,
 .dashboard-charts,
 .recent-batches {
   margin-top: 16px;
@@ -264,19 +288,80 @@ onBeforeUnmount(() => {
   line-height: 1.5;
 }
 
+.agent-flow {
+  display: grid;
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.agent-flow-item {
+  position: relative;
+  display: grid;
+  align-content: start;
+  gap: 7px;
+  min-height: 126px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: rgba(15, 23, 34, 0.62);
+}
+
+.agent-flow-item:not(:last-child)::after {
+  content: "→";
+  position: absolute;
+  right: -12px;
+  top: 18px;
+  color: var(--weak);
+  font-size: 16px;
+}
+
+.agent-step-index {
+  width: 24px;
+  height: 24px;
+  display: grid;
+  place-items: center;
+  border-radius: 999px;
+  color: #07131c;
+  background: linear-gradient(135deg, var(--cyan), var(--blue));
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.agent-flow-item strong {
+  color: var(--text);
+  font-size: 14px;
+}
+
+.agent-flow-item p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
 .empty-chart {
   min-height: 320px;
 }
 
 @media (max-width: 720px) {
-  .ai-capability-grid {
+  .ai-capability-grid,
+  .agent-flow {
     grid-template-columns: 1fr;
+  }
+
+  .agent-flow-item:not(:last-child)::after {
+    display: none;
   }
 }
 
 @media (min-width: 721px) and (max-width: 1280px) {
-  .ai-capability-grid {
+  .ai-capability-grid,
+  .agent-flow {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .agent-flow-item:not(:last-child)::after {
+    display: none;
   }
 }
 </style>

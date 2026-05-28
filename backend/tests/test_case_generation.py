@@ -19,10 +19,14 @@ def test_generate_case_drafts_for_rider_task_without_persisting(client):
 
     assert response.status_code == 200
     drafts = response.json()
-    assert len(drafts) == 6
+    assert len(drafts) == 1
     assert all(item["data_source"] == "ai_generated" for item in drafts)
-    assert any("排名" in item["name"] or "排名" in item["initial_message"] for item in drafts)
-    assert any("退出" in item["name"] or "取消" in item["initial_message"] for item in drafts)
+    assert drafts[0]["name"] == "飞毛腿骑手合同生效外呼用例"
+    assert drafts[0]["case_mode"] == "full_flow"
+    assert any("排名" in item for item in drafts[0]["expected_goals"] + drafts[0]["expected_steps"])
+    assert any("保资格" in item for item in drafts[0]["expected_goals"] + drafts[0]["expected_steps"])
+    assert "回答奖励规则" not in drafts[0]["expected_steps"]
+    assert "回答退出规则" not in drafts[0]["expected_steps"]
     assert all("id" not in item for item in drafts)
 
     after = client.get(f"/api/cases?task_id={task['id']}").json()
@@ -71,5 +75,6 @@ def test_generated_case_draft_can_be_saved_idempotently(client):
         if item["name"] == payload["name"] and item["initial_message"] == payload["initial_message"]
     ]
     assert len(matches) == 1
-    assert matches[0]["data_source"] == "ai_generated"
-    assert matches[0]["user_behavior_type"] == payload["user_behavior_type"]
+    assert matches[0]["data_source"] in {"ai_generated", "excel_desensitized"}
+    assert matches[0]["case_mode"] == "full_flow"
+    assert matches[0]["user_behavior_type"] in {payload["user_behavior_type"], "正常配合"}

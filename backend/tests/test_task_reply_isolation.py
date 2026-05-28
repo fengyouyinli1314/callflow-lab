@@ -51,7 +51,9 @@ def _run_case(client, task_name, case_name):
     assert messages_response.status_code == 200
     messages = messages_response.json()
     assert messages
-    first_reply = messages[0]["assistant_message"]
+    business_messages = [item for item in messages if item.get("turn_index") != 0]
+    assert messages[0]["detail"].get("message_phase") == "opening"
+    first_reply = business_messages[0]["assistant_message"]
     all_replies = "\n".join(item["assistant_message"] for item in messages)
     return first_reply, all_replies, result
 
@@ -65,25 +67,28 @@ def _assert_has_any(text, terms):
     assert any(term in text for term in terms), text
 
 
-def test_rider_contract_impact_reply_is_task_scoped(client):
-    first_reply, all_replies, result = _run_case(client, "飞毛腿骑手合同生效外呼评测", "询问合同影响")
+def test_rider_recursive_full_flow_reply_is_task_scoped(client):
+    first_reply, all_replies, result = _run_case(client, "飞毛腿骑手合同生效外呼评测", "飞毛腿骑手合同生效外呼用例")
 
     assert result["task_type"] == "rider_outbound"
     _assert_no_terms(all_replies, RIDER_FORBIDDEN)
-    _assert_has_any(first_reply, ["X 单", "合同", "派单", "影响", "完成"])
+    _assert_has_any(first_reply, ["合同已签署", "合同已生效", "开始配送"])
+    _assert_has_any(all_replies, ["X 单", "X单"])
+    _assert_has_any(all_replies, ["Y 单", "Y单"])
+    _assert_has_any(all_replies, ["按排名", "按系统排名"])
+    _assert_has_any(all_replies, ["不是站长人工干预", "不是站长干预", "非站长干预", "非站长"])
+    _assert_has_any(all_replies, ["拒单", "取消", "超时"])
+    _assert_has_any(all_replies, ["资格", "名额"])
 
 
-def test_rider_bad_weather_reply_is_task_scoped(client):
-    first_reply, all_replies, result = _run_case(client, "飞毛腿骑手合同生效外呼评测", "抱怨恶劣天气")
-
-    assert result["task_type"] == "rider_outbound"
-    _assert_no_terms(all_replies, RIDER_FORBIDDEN)
-    _assert_has_any(first_reply, ["安全", "雨天", "资格", "能跑", "记录"])
-
-
-def test_course_non_owner_reply_is_task_scoped(client):
-    first_reply, all_replies, result = _run_case(client, "课程直播产品升级外呼评测", "非负责人转达")
+def test_course_full_flow_reply_is_task_scoped(client):
+    first_reply, all_replies, result = _run_case(client, "课程直播产品升级外呼评测", "课程直播产品升级外呼用例")
 
     assert result["task_type"] == "course_platform_outbound"
     _assert_no_terms(all_replies, COURSE_FORBIDDEN)
-    _assert_has_any(first_reply, ["负责人", "转达", "直播", "低延迟", "发布页"])
+    _assert_has_any(first_reply, ["了解低延迟直播"])
+    _assert_has_any(all_replies, ["独立的低延迟直播选项", "低延迟直播选项"])
+    _assert_has_any(all_replies, ["标准直播", "低延迟直播"])
+    _assert_has_any(all_replies, ["Web", "校务A", "SaaS"])
+    _assert_has_any(all_replies, ["进【我的】", "直播平台管理", "勾选低延迟"])
+    _assert_has_any(all_replies, ["企业微信"])

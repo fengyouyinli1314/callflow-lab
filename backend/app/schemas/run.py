@@ -1,7 +1,7 @@
 from datetime import datetime
 from typing import Any, Dict, List
 
-from sqlmodel import SQLModel
+from sqlmodel import Field, SQLModel
 
 
 class RunStartRequest(SQLModel):
@@ -35,6 +35,7 @@ class RunRead(SQLModel):
     total_score: float
     model_provider: str = "mock_fallback"
     model_name: str = "mock_fallback"
+    memory_state: Dict[str, Any] = Field(default_factory=dict)
     created_at: datetime
     finished_at: datetime | None = None
 
