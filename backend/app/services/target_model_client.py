@@ -59,18 +59,6 @@ class TargetModelClient:
     providers = SUPPORTED_TARGET_PROVIDERS
 
     rider_forbidden_terms = [
-        "退款",
-        "订单号",
-        "手机号后四位",
-        "商家出餐",
-        "平台超时",
-        "配送状态",
-        "超时节点",
-        "投诉",
-        "处理时间",
-        "酒店",
-        "团购券",
-        "核销",
         "标准直播",
         "低延迟直播",
         "负责人",
@@ -85,13 +73,6 @@ class TargetModelClient:
         "X单",
         "Y 单",
         "Y单",
-        "退款",
-        "订单号",
-        "手机号后四位",
-        "商家出餐",
-        "平台超时",
-        "核销",
-        "酒店",
     ]
 
     def __init__(self, provider: str | None = None, model_name: str | None = None) -> None:
@@ -325,7 +306,7 @@ class TargetModelClient:
             reply = "我同事确认后回电，先答我能答的。"
         elif stage == "accepted":
             if "已提醒安全" not in said:
-                reply = "好的，跑单注意安全。"
+                reply = "好的，尽量完成，注意安全；恶劣天气订单量更高，有助保资格。"
             elif "已说明排名与保资格规则" not in said:
                 reply = self._rider_rank_qualification_reply()
             else:
@@ -339,7 +320,7 @@ class TargetModelClient:
             elif "已询问是否开始配送" not in said:
                 reply = "今天可以开始配送吗？"
             elif "已提醒安全" not in said:
-                reply = "好的，尽量完成，注意安全。"
+                reply = "好的，尽量完成，注意安全；恶劣天气订单量更高，有助保资格。"
             elif "已说明排名与保资格规则" not in said:
                 reply = self._rider_rank_qualification_reply()
             else:
@@ -394,25 +375,38 @@ class TargetModelClient:
             else:
                 reply = "麻烦帮负责人转达一下。"
         elif stage in {"owner", "upgrade_intro"}:
-            if stage == "owner" and "已询问知情" not in said and not self._has_any(assistant_text, ["了解低延迟", "知道低延迟", "是否知道"]):
-                reply = "您了解低延迟直播吗？"
-            elif stage == "upgrade_intro" or self._has_any(last_user, ["升级", "新增", "改了", "变了"]):
-                reply = "发布页新增了独立的低延迟直播选项。"
+            if stage == "owner" and "已询问知情" not in said and not self._has_any(assistant_text, ["后台已走低延迟", "保障质量", "您知道吗"]):
+                if "已说明发布页升级" not in said:
+                    reply = "直播产品升级了，新增低延迟直播选项。"
+                elif not self._has_any(assistant_text, ["标准和低延迟两个选项", "分标准和低延迟"]):
+                    reply = "发布页以后分标准和低延迟两个选项。"
+                elif not self._has_any(assistant_text, ["发课时选低延迟即可", "选低延迟即可"]):
+                    reply = "发课时选低延迟即可。"
+                elif not self._has_any(assistant_text, ["其他流程不变", "流程不变"]):
+                    reply = "其他流程不变。"
+                else:
+                    reply = "您之前选的是标准直播，但我们后台其实已为您走低延迟线路以保障质量，您知道吗？"
+            elif self._has_any(last_user, ["变化", "什么变化", "改了什么", "升级了什么"]):
+                reply = "发布页以后分标准和低延迟两个选项。"
             elif "已说明发布页升级" not in said:
-                reply = "我们直播产品升级了。"
-            elif not self._has_any(assistant_text, ["低延迟选项", "低延迟直播选项", "新增低延迟", "独立的低延迟"]):
-                reply = "发布页新增了独立的低延迟直播选项。"
+                reply = "发布页以后分标准和低延迟两个选项。"
+            elif not self._has_any(assistant_text, ["标准和低延迟两个选项", "分标准和低延迟"]):
+                reply = "发布页以后分标准和低延迟两个选项。"
+            elif not self._has_any(assistant_text, ["发课时选低延迟即可", "选低延迟即可"]):
+                reply = "发课时选低延迟即可。"
+            elif not self._has_any(assistant_text, ["其他流程不变", "流程不变"]):
+                reply = "其他流程不变。"
             else:
-                reply = "发课时选低延迟直播。"
+                reply = "您之前选的是标准直播，但我们后台其实已为您走低延迟线路以保障质量，您知道吗？"
         elif stage == "usage":
-            reply = "发课时选低延迟直播。"
+            reply = "发课时选低延迟即可。"
         elif stage == "flow_change":
-            reply = "其他发课流程不变。"
+            reply = "其他流程不变。"
         elif stage == "awareness_check":
             if self._has_any(last_user, ["不知道", "不知情", "没听过"]):
-                reply = "发布页新增了独立的低延迟直播选项。"
+                reply = "前端当时未开放，临时开低延迟是保障音画同步。"
             else:
-                reply = "发布页新增了独立的低延迟直播选项。"
+                reply = "发布页以后分标准和低延迟两个选项。"
         elif stage == "live_difference":
             reply = self._course_live_difference_reply(assistant_text)
         elif self._has_any(last_user, ["到了", "下一步", "继续", "收到", "可以", "哪里", "选", "配置"]) and self._has_any(last_assistant, ["选择【直播平台】"]):
@@ -506,22 +500,27 @@ class TargetModelClient:
             assistant_text,
             ["企业微信", "通过验证", "请提供可添加手机号"],
         ):
-            reply = "祝课程顺利，先这样。"
+            reply = "祝课程顺利，招生满满。"
             should_close = True
         elif stage == "accepted":
-            reply = "祝课程顺利，先这样。"
-            should_close = True
+            if "已询问知情" not in said:
+                reply = "您之前选的是标准直播，但我们后台其实已为您走低延迟线路以保障质量，您知道吗？"
+            else:
+                reply = "祝课程顺利，招生满满。"
+                should_close = True
         else:
             if self._has_any(last_user, ["升级", "变", "页面"]):
                 reply = "发布页新增了独立的低延迟直播选项。"
             elif "已确认负责人" not in said:
                 reply = "请问您是负责人吗？"
             elif "已询问知情" not in said:
-                reply = "您了解低延迟直播吗？"
+                reply = "您之前选的是标准直播，但我们后台其实已为您走低延迟线路以保障质量，您知道吗？"
             elif "已说明发布页升级" not in said:
                 reply = "我们直播产品升级了。"
             elif not self._has_any(assistant_text, ["低延迟选项", "低延迟直播选项", "新增低延迟", "独立的低延迟"]):
                 reply = "发布页新增了独立的低延迟直播选项。"
+            elif "已说明标准直播/低延迟直播区别" not in said:
+                reply = self._course_live_difference_reply(assistant_text)
             elif "已询问发布方式" not in said:
                 reply = "Web还是第三方发布？"
             elif "已询问前端是否可见" not in said:
@@ -693,23 +692,35 @@ class TargetModelClient:
         assistant_text: str,
     ) -> Tuple[str, bool]:
         if stage in {"owner", "upgrade_intro"}:
-            if stage == "owner" and "已询问知情" not in said and not self._has_any(assistant_text, ["了解低延迟", "知道低延迟", "是否知道"]):
-                return "您了解低延迟直播吗？", False
-            if stage == "upgrade_intro" or self._has_any(last_user, ["升级", "新增", "改了", "变了"]):
-                return "发布页新增了独立的低延迟直播选项。", False
+            if stage == "owner" and "已询问知情" not in said and not self._has_any(assistant_text, ["后台已走低延迟", "保障质量", "您知道吗"]):
+                if "已说明发布页升级" not in said:
+                    return "直播产品升级了，新增低延迟直播选项。", False
+                if not self._has_any(assistant_text, ["标准和低延迟两个选项", "分标准和低延迟"]):
+                    return "发布页以后分标准和低延迟两个选项。", False
+                if not self._has_any(assistant_text, ["发课时选低延迟即可", "选低延迟即可"]):
+                    return "发课时选低延迟即可。", False
+                if not self._has_any(assistant_text, ["其他流程不变", "流程不变"]):
+                    return "其他流程不变。", False
+                return "您之前选的是标准直播，但我们后台其实已为您走低延迟线路以保障质量，您知道吗？", False
+            if self._has_any(last_user, ["变化", "什么变化", "改了什么", "升级了什么"]):
+                return "发布页以后分标准和低延迟两个选项。", False
             if "已说明发布页升级" not in said:
-                return "我们直播产品升级了。", False
-            if not self._has_any(assistant_text, ["低延迟选项", "低延迟直播选项", "新增低延迟", "独立的低延迟"]):
-                return "发布页新增了独立的低延迟直播选项。", False
-            return "发课时选低延迟直播。", False
+                return "发布页以后分标准和低延迟两个选项。", False
+            if not self._has_any(assistant_text, ["标准和低延迟两个选项", "分标准和低延迟"]):
+                return "发布页以后分标准和低延迟两个选项。", False
+            if not self._has_any(assistant_text, ["发课时选低延迟即可", "选低延迟即可"]):
+                return "发课时选低延迟即可。", False
+            if not self._has_any(assistant_text, ["其他流程不变", "流程不变"]):
+                return "其他流程不变。", False
+            return "您之前选的是标准直播，但我们后台其实已为您走低延迟线路以保障质量，您知道吗？", False
         if stage == "usage":
-            return "发课时选低延迟直播。", False
+            return "发课时选低延迟即可。", False
         if stage == "flow_change":
-            return "其他发课流程不变。", False
+            return "其他流程不变。", False
         if stage == "awareness_check":
             if self._has_any(last_user, ["不知道", "不知情", "没听过"]):
-                return "发布页新增了独立的低延迟直播选项。", False
-            return "发布页新增了独立的低延迟直播选项。", False
+                return "前端当时未开放，临时开低延迟是保障音画同步。", False
+            return "发布页以后分标准和低延迟两个选项。", False
         if stage == "busy":
             if not self._has_any(assistant_text, ["1分钟", "1 分钟", "保证简短"]):
                 return "就1分钟，我说重点。", False
@@ -745,7 +756,9 @@ class TargetModelClient:
         if stage == "enterprise_wechat":
             return "企业微信加您，请验证。", False
         if stage == "accepted":
-            return "祝课程顺利，先这样。", True
+            if "已询问知情" not in said:
+                return "您之前选的是标准直播，但我们后台其实已为您走低延迟线路以保障质量，您知道吗？", False
+            return "祝课程顺利，招生满满。", True
         if self._has_any(last_user, ["升级", "变", "页面"]):
             return "发布页新增了独立的低延迟直播选项。", False
         if "已说明发布页升级" not in said:
@@ -1068,19 +1081,21 @@ class TargetModelClient:
         if task_type == "course_platform_outbound":
             by_stage = {
                 "owner": [
-                    "您了解低延迟直播吗？",
-                    "发布页新增了独立的低延迟直播选项。",
-                    "发课时选低延迟直播。",
+                    "直播产品升级了，新增低延迟直播选项。",
+                    "发布页以后分标准和低延迟两个选项。",
+                    "发课时选低延迟即可。",
+                    "其他流程不变。",
                 ],
                 "upgrade_intro": [
-                    "发布页新增了独立的低延迟直播选项。",
-                    "发课时选低延迟直播。",
+                    "发布页以后分标准和低延迟两个选项。",
+                    "发课时选低延迟即可。",
+                    "其他流程不变。",
                 ],
                 "usage": [
-                    "发课时选低延迟直播。",
+                    "发课时选低延迟即可。",
                 ],
                 "flow_change": [
-                    "其他发课流程不变。",
+                    "其他流程不变。",
                 ],
                 "awareness_check": [
                     "发布页新增了独立的低延迟直播选项。",
@@ -1137,7 +1152,7 @@ class TargetModelClient:
                     "当前号码能加吗？",
                 ],
                 "accepted": [
-                    "祝课程顺利，先这样。",
+                    "祝课程顺利，招生满满。",
                 ],
             }
             return by_stage.get(
@@ -1148,7 +1163,7 @@ class TargetModelClient:
                     "进【我的】。",
                     "学员端有附加费吗？",
                     "当前号码能加吗？",
-                    "祝课程顺利，先这样。",
+                    "祝课程顺利，招生满满。",
                 ],
             )
         return ["我换个说法：按当前外呼流程继续确认下一步。"]
@@ -1558,8 +1573,9 @@ class TargetModelClient:
             "课程直播回复硬约束：每次最多 15-20 个中文字符左右；"
             "主流程按身份确认、知情确认、升级内容、区别价格、发布方式、配置路径、费用检查、企业微信、结束确认渐进推进；"
             "每次只说一个信息点；说完必须停下来等商家回应；"
-            "负责人确认后先问：您了解低延迟直播吗？"
-            "常规推进优先按：您了解低延迟直播吗？/发布页新增了独立的低延迟直播选项。/发课时选低延迟直播。/其他发课流程不变。"
+            "负责人确认后先说：直播产品升级了，新增低延迟直播选项。"
+            "再按：发布页以后分标准和低延迟两个选项。/发课时选低延迟即可。/其他流程不变。"
+            "之后询问：您之前选的是标准直播，但我们后台其实已为您走低延迟线路以保障质量，您知道吗？"
             "直播区别分轮回答：标准直播费用低，延迟5-10秒。/适合大班课。/低延迟1-2秒，互动更流畅。/适合小班和实操课。"
             "只生成被测模型该说的话，不要替商家回答知道/不知道、Web/SaaS、是否已显示等分支；"
             "条件分支只在当前步骤内处理，处理后回到主流程；"

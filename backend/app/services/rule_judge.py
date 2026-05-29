@@ -28,31 +28,6 @@ METRIC_NAMES = {
 }
 
 
-OLD_BUSINESS_GUARDRAIL_TERMS = [
-    "订单号",
-    "退款",
-    "手机号后四位",
-    "商家出餐",
-    "商家出餐时间",
-    "平台超时",
-    "平台超时规则",
-    "配送状态",
-    "超时节点",
-    "处理时间",
-    "团购券",
-    "核销",
-    "酒店",
-]
-
-COMMON_HIDDEN_GUARDRAIL_RULES = [
-    "禁止出现订单号",
-    "禁止出现退款",
-    "禁止出现酒店",
-    "禁止出现团购券",
-    "禁止串用旧客服场景",
-    "禁止出现商家出餐时间",
-    "禁止出现平台超时规则",
-]
 
 RIDER_HIDDEN_GUARDRAIL_RULES = [
     "禁止串用课程直播场景",
@@ -1133,7 +1108,7 @@ class RuleJudge:
     def _case_rule_applies(self, rule: str, task_type: str, context_text: str) -> bool:
         if not rule:
             return False
-        generic_terms = ["简短", "重复", "串用", "旧客服", "职责外", "长篇", "语气", "超出知识"]
+        generic_terms = ["简短", "重复", "串用", "职责外", "长篇", "语气", "超出知识"]
         if self._has_any(rule, generic_terms):
             return True
         if task_type == "course_platform_outbound":
@@ -1348,7 +1323,7 @@ class RuleJudge:
         return list(payload.get("required", [])), list(payload.get("forbidden", []))
 
     def _hidden_guardrail_rules(self, task_type: str) -> List[str]:
-        rules = list(COMMON_HIDDEN_GUARDRAIL_RULES)
+        rules: List[str] = []
         if task_type == "rider_outbound":
             rules.extend(RIDER_HIDDEN_GUARDRAIL_RULES)
         elif task_type == "course_platform_outbound":
@@ -1359,16 +1334,6 @@ class RuleJudge:
         return self._has_any(
             rule,
             [
-                "订单号",
-                "退款",
-                "酒店",
-                "团购券",
-                "核销",
-                "手机号后四位",
-                "商家出餐",
-                "平台超时",
-                "旧客服",
-                "串用旧业务",
                 "串用课程直播",
                 "串用飞毛腿",
             ],
@@ -1429,7 +1394,6 @@ class RuleJudge:
                 "不能忽略骑手拒绝",
                 "不能长篇大论",
                 "不能明显超过 30 字",
-                "不能出现订单号、退款、商家出餐时间等旧客服内容",
                 "不能重复机械回复",
                 "必须根据用户追问推进流程",
             ]
@@ -1482,9 +1446,6 @@ class RuleJudge:
 
         if rule == "必须根据用户追问推进流程":
             return self._stalled_followup_evidence(messages, task_type)
-
-        if "禁止串用旧客服流程" in rule or "旧客服内容" in rule or "串用旧业务场景" in rule:
-            return self._find_evidence(OLD_BUSINESS_GUARDRAIL_TERMS, messages)
 
         if task_type == "course_platform_outbound" and ("15-20 字" in rule or "长篇" in rule):
             return self._course_brevity_violation(messages)
@@ -1542,20 +1503,10 @@ class RuleJudge:
 
     def _hidden_guardrail_keywords(self, rule: str, task_type: str) -> List[str]:
         rule_map = {
-            "禁止出现订单号": ["订单号"],
-            "禁止出现退款": ["退款"],
-            "禁止出现酒店": ["酒店"],
-            "禁止出现团购券": ["团购券"],
-            "禁止出现商家出餐时间": ["商家出餐", "商家出餐时间"],
-            "禁止出现平台超时规则": ["平台超时", "平台超时规则"],
-            "禁止串用旧客服场景": OLD_BUSINESS_GUARDRAIL_TERMS,
             "禁止串用课程直播场景": ["标准直播", "低延迟直播", "课程直播", "负责人", "企业微信"],
             "禁止串用飞毛腿场景": ["飞毛腿", "骑手", "配送", "派单", "合同 X 单", "合同Y单", "X 单", "Y 单"],
         }
-        keywords = list(rule_map.get(rule, []))
-        if not keywords:
-            keywords = OLD_BUSINESS_GUARDRAIL_TERMS
-        return self._variants(*keywords)
+        return self._variants(*list(rule_map.get(rule, [])))
 
     def _course_brevity_evidence(self, messages: List[Dict[str, Any]]) -> Dict[str, Any] | None:
         replies = [item for item in messages if item.get("assistant_message")]
@@ -1778,7 +1729,6 @@ class RuleJudge:
 
     def _forbidden_keywords(self, rule: str) -> List[str]:
         categories = [
-            (["禁止串用旧客服流程", "旧客服内容"], ["订单号", "退款", "手机号后四位", "商家出餐", "商家出餐时间", "平台超时", "配送状态", "超时节点", "处理时间", "投诉", "团购券", "核销", "酒店"]),
             (["额外奖励", "具体奖励金额"], ["保证奖励", "一定奖励", "奖励 100", "补贴 100", "真实金额", "具体金额"]),
             (["额外资格"], ["承诺额外资格", "额外资格", "保证资格", "一定获得资格"]),
             (["排名由站长决定", "站长决定", "站长可以手动调整排名"], ["站长决定排名", "排名由站长决定", "我帮你调排名", "站长可以调", "站长手动调整排名"]),
@@ -2012,9 +1962,9 @@ class RuleJudge:
                     "severity": "high",
                     "turn_index": evidence["turn_index"],
                     "evidence": f"系统防串场检查命中：{rule}",
-                    "deduction_reason": f"回复出现与当前官方任务无关的旧业务或跨任务内容：“{rule}”。",
+                    "deduction_reason": f"回复出现跨任务内容：“{rule}”。",
                     "dialogue_snippet": evidence["evidence_text"],
-                    "suggestion": "生成回复前按当前 task_type 做业务词白名单校验，避免旧客服场景串入。",
+                    "suggestion": "生成回复前按当前 task_type 校验，避免跨任务场景串入。",
                     "source": "hidden_guardrail",
                     "section": "系统防串场检查",
                 }

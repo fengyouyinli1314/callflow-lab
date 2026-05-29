@@ -113,7 +113,7 @@ def test_course_owner_full_flow_does_not_stop_after_opening(client):
     assert "是否没有串场" in messages[0]["detail"]["hidden_guardrail_rules"]["matched"]
     assert messages[0]["detail"]["deduction_reason"] == ""
     assert messages[1]["user_message"] == "我是负责人，你说吧。"
-    assert messages[1]["assistant_message"] == "您了解低延迟直播吗？"
+    assert messages[1]["assistant_message"] == "直播产品升级了，新增低延迟直播选项。"
     assert any("独立的低延迟直播选项" in item["assistant_message"] for item in messages)
     assert messages[1]["detail"]["memory_state"]["run_id"] == result["run_id"]
     assert messages[1]["detail"]["memory_state"]["flow_memory"]["pending_steps"]

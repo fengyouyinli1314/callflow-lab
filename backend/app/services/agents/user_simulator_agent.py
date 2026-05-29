@@ -206,7 +206,7 @@ class UserSimulatorAgent:
         if "反复追问商家" in identity_text and turn_index >= 2:
             return "ask_question"
         has_seed = bool((memory_state or {}).get("run_context")) if isinstance(memory_state, dict) else False
-        if not explicit_event_profile and (not has_seed or "强渐进" in profile_text or "完整流程" in profile_text):
+        if not explicit_event_profile and (not has_seed or "强渐进" in profile_text or "完整流程" in profile_text or case.get("case_mode") == "full_flow" or "课程直播产品升级外呼" in profile_text or "飞毛腿骑手合同生效外呼" in profile_text):
             return "normal"
         current_step = self._course_current_step(memory_state)
         available = self._available_events_for_step(current_step)
@@ -345,8 +345,8 @@ class UserSimulatorAgent:
             return None
         if self._has_any(last_assistant, ["Web还是第三方", "发布方式"]):
             return self._course_branch_answer(case_payload, "publish_method"), "回答发布方式", True, "in_progress", 0, 0
-        if self._has_any(last_assistant, ["流程不变", "其他发课流程不变"]):
-            return "我之前不知道。", "补充是否知情", True, "in_progress", 0, 0
+        if self._has_any(last_assistant, ["保障质量", "您知道吗", "后台已走低延迟"]):
+            return self._course_branch_answer(case_payload, "awareness"), "回答是否知情", True, "in_progress", 0, 0
         if self._has_any(last_assistant, ["低延迟已显示吗", "已显示吗", "显示吗"]):
             return self._course_branch_answer(case_payload, "visibility"), "回答前端是否可见", True, "in_progress", 0, 0
         if self._has_any(last_assistant, ["附加费", "学员端"]):
@@ -478,7 +478,8 @@ class UserSimulatorAgent:
             if "不是别的" not in user_text:
                 return "我问的是这个，不是别的。", "继续追问未回答问题", True, "in_progress", 1, -1
 
-        flow_prompt = self._flow_memory_prompt(task_type, memory_state, last_assistant, user_text)
+        assistant_text = "\n".join(str(item.get("assistant_message", "") or "") for item in recent_messages)
+        flow_prompt = self._flow_memory_prompt(task_type, memory_state, last_assistant, user_text, assistant_text)
         if flow_prompt:
             return flow_prompt
 
@@ -493,6 +494,7 @@ class UserSimulatorAgent:
         memory_state: Dict[str, Any],
         last_assistant: str,
         user_text: str,
+        assistant_text: str,
     ) -> Tuple[str, str, bool, str, int, int] | None:
         pending = self._pending_memory_items(memory_state)
         if task_type == "course_platform_outbound":
@@ -502,7 +504,7 @@ class UserSimulatorAgent:
             )
             if self._has_pending(pending, ["身份确认"]) and not self._has_any(last_assistant, ["负责人", "转达"]):
                 return "你先说你找谁？", "追问身份确认", True, "in_progress", 1, -1
-            if self._has_pending(pending, ["传达升级内容", "产品升级说明"]) and not self._has_any(last_assistant, ["新增", "两个选项", "标准直播", "低延迟"]):
+            if self._has_pending(pending, ["传达升级内容", "产品升级说明"]) and not self._has_any(assistant_text, ["新增低延迟直播选项", "分标准和低延迟", "发布页以后"]):
                 return "到底新增了什么？", "追问升级内容", True, "in_progress", 0, -1
             if (
                 self._has_pending(pending, ["询问发布方式"])
@@ -548,7 +550,7 @@ class UserSimulatorAgent:
                 return self._course_branch_answer(case_payload, "fee"), "回答费用设置情况", True, "in_progress", 0, 0
             if self._has_any(last_assistant, ["当前号码能加吗", "号码能加吗"]):
                 return self._course_branch_answer(case_payload, "wechat"), "回答企业微信号码状态", True, "in_progress", 0, 0
-            if self._has_pending(pending, ["确认是否知情"]) and not self._has_any(last_assistant, ["知道", "后台走低延迟"]):
+            if self._has_pending(pending, ["确认是否知情", "传达升级内容", "产品升级说明", "说明标准直播和低延迟直播区别", "说明价格差异"]) and not self._has_any(last_assistant, ["保障质量", "您知道吗", "后台已走低延迟"]):
                 return None
             prompts = {
                 "传达升级内容": ("到底新增了什么？", "追问升级内容"),
@@ -635,12 +637,6 @@ class UserSimulatorAgent:
         if task_type == "rider_outbound" and profile == "rider_weather":
             if self._has_any(last_assistant, ["必须跑", "强制", "不跑不行", "冒雨也要", "必须配送"]):
                 return "你这是让我冒险，我先不聊了。", "恶劣天气被强迫后不满", False, "rejected", 2, -2
-        forbidden_hits = self._has_any(
-            last_assistant,
-            ["订单号", "退款", "手机号后四位", "酒店", "核销", "团购券"],
-        )
-        if forbidden_hits:
-            return "你说的不是我这个事情吧？先别继续了。", "识别串场后拒绝", False, "rejected", 2, -2
         return None
 
     def _rider_message(
@@ -807,21 +803,26 @@ class UserSimulatorAgent:
                 return self._variant_text(memory_state, "升级了什么？", "具体升级了什么？", "这次新增了什么？"), "追问升级内容", True, "in_progress", 0, 0
             if self._has_any(assistant_text, ["低延迟直播选项", "新增低延迟"]) and not self._has_any(
                 assistant_text,
+                ["分标准和低延迟", "标准和低延迟两个选项"],
+            ):
+                return self._variant_text(memory_state, "升级了什么？", "具体升级了什么？", "这次新增了什么？"), "追问升级内容", True, "in_progress", 0, 0
+            if self._has_any(assistant_text, ["分标准和低延迟", "标准和低延迟两个选项"]) and not self._has_any(
+                assistant_text,
                 ["发课时选低延迟", "发课时选择低延迟"],
             ):
                 return self._variant_text(memory_state, "我怎么用？", "那我要怎么用？", "发课时怎么操作？"), "追问使用方式", True, "in_progress", 0, 0
             if self._has_any(assistant_text, ["发课时选低延迟", "发课时选择低延迟"]) and not self._has_any(
                 assistant_text,
-                ["流程不变", "其他发课流程不变"],
+                ["流程不变", "其他发课流程不变", "其他流程不变"],
             ):
                 return self._variant_text(memory_state, "流程会变吗？", "其他流程变不变？", "发课流程会改吗？"), "追问流程变化", True, "in_progress", 0, 0
             step = pending[0]
             if step in {"产品升级说明", "传达升级内容"}:
                 return self._variant_text(memory_state, "升级了什么？", "具体升级了什么？", "这次新增了什么？"), "追问升级内容", True, "in_progress", 0, 0
             if step == "确认是否知情":
-                if self._has_any(last_assistant, ["知道", "后台走低延迟"]):
+                if self._has_any(last_assistant, ["保障质量", "您知道吗", "后台已走低延迟"]):
                     return self._course_branch_answer(case_payload, "awareness"), "回答是否知情", True, "in_progress", 0, 0
-                return self._variant_text(memory_state, "我之前不知道。", "之前没听过。", "这个我还不知道。"), "补充是否知情", True, "in_progress", 0, 0
+                return self._variant_text(memory_state, "好。", "嗯，知道了。", "行。"), "确认Step1完成", True, "in_progress", 0, 0
             if step == "说明标准直播和低延迟直播区别":
                 if not self._has_any(assistant_text, ["5-10 秒", "5-10秒", "5到10秒"]):
                     return self._variant_text(memory_state, "区别是什么？", "标准和低延迟区别在哪？", "这两个直播区别是什么？"), "继续覆盖直播区别", True, "in_progress", 0, 0
@@ -1366,7 +1367,7 @@ class UserSimulatorAgent:
     ) -> bool:
         if not text:
             return False
-        limit = 90 if task_type == "rider_outbound" else 24
+        limit = 90 if task_type == "rider_outbound" else 42
         if state and state.patience <= 2:
             limit -= 15
         return len(text) > limit

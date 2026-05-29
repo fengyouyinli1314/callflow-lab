@@ -431,7 +431,7 @@ def test_course_external_reply_repaired_when_non_driver_says_call_later():
         [{"turn_index": 0, "user_message": "", "assistant_message": "您好，请问您是负责人吗？"}],
     )
 
-    assert result.content == "您了解低延迟直播吗？"
+    assert result.content == "直播产品升级了，新增低延迟直播选项。"
     assert "好的" not in result.content
     assert "稍后再打" not in result.content
     assert result.should_close is False

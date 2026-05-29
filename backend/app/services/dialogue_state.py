@@ -118,7 +118,7 @@ def _assistant_topics(task_type: str, text: str) -> List[str]:
     if task_type == "course_platform_outbound" and _has_any(text, ["5-10 秒", "5-10秒", "5到10秒", "标准延迟", "标准直播延迟"]) and _has_any(
         text,
         ["1-2 秒", "1-2秒", "1到2秒", "低延迟约", "低延迟1-2秒"],
-    ):
+    ) and _has_any(text, ["大班课"]) and _has_any(text, ["小班", "实操"]):
         topics.append("已说明标准直播/低延迟直播区别")
     return topics
 

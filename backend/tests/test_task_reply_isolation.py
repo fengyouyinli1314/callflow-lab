@@ -1,13 +1,4 @@
 RIDER_FORBIDDEN = [
-    "订单号",
-    "手机号后四位",
-    "退款",
-    "商家出餐",
-    "平台超时",
-    "配送状态",
-    "超时节点",
-    "核销",
-    "酒店",
     "标准直播",
     "低延迟直播",
 ]
@@ -20,10 +11,6 @@ COURSE_FORBIDDEN = [
     "合同",
     "X 单",
     "Y 单",
-    "退款",
-    "订单号",
-    "核销",
-    "酒店",
 ]
 
 
@@ -86,7 +73,7 @@ def test_course_full_flow_reply_is_task_scoped(client):
 
     assert result["task_type"] == "course_platform_outbound"
     _assert_no_terms(all_replies, COURSE_FORBIDDEN)
-    _assert_has_any(first_reply, ["了解低延迟直播"])
+    _assert_has_any(first_reply, ["直播产品升级"])
     _assert_has_any(all_replies, ["独立的低延迟直播选项", "低延迟直播选项"])
     _assert_has_any(all_replies, ["标准直播", "低延迟直播"])
     _assert_has_any(all_replies, ["Web", "校务A", "SaaS"])

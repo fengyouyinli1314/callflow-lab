@@ -54,7 +54,7 @@ CASE_SPECS = {
             "case_mode": "branch",
             "expected_goals": ["回答合同完成要求", "说明可能影响合同和派单", "不夸大处罚"],
             "required_rules": ["必须说明单日/多日完成要求", "必须说明未完成影响"],
-            "forbidden_rules": ["禁止串用旧客服流程"],
+            "forbidden_rules": ["禁止串用课程直播场景"],
             "difficulty": "中等",
         },
         {
@@ -65,7 +65,7 @@ CASE_SPECS = {
             "case_mode": "branch",
             "expected_goals": ["先安抚", "提醒安全", "说明雨天完成有助于保住资格", "不强迫骑手冒险"],
             "required_rules": ["必须安抚拒绝或情绪不满骑手", "必须提醒安全"],
-            "forbidden_rules": ["禁止强迫恶劣天气配送", "禁止串用旧客服流程"],
+            "forbidden_rules": ["禁止强迫恶劣天气配送", "禁止串用课程直播场景"],
             "difficulty": "困难",
         },
         {
@@ -76,7 +76,7 @@ CASE_SPECS = {
             "case_mode": "branch",
             "expected_goals": ["告知需要在前一天指定时间前在 App 报名页取消"],
             "required_rules": ["必须正确说明退出流程"],
-            "forbidden_rules": ["禁止串用旧客服流程"],
+            "forbidden_rules": ["禁止串用课程直播场景"],
             "difficulty": "中等",
         },
         {
@@ -87,7 +87,7 @@ CASE_SPECS = {
             "case_mode": "branch",
             "expected_goals": ["说明报名按排名进行", "说明不是站长干预"],
             "required_rules": ["必须说明报名排名非站长干预"],
-            "forbidden_rules": ["禁止串用旧客服流程"],
+            "forbidden_rules": ["禁止串用课程直播场景"],
             "difficulty": "中等",
         },
     ],
