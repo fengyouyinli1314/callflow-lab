@@ -105,7 +105,7 @@ class EvaluationService:
             except TargetModelError as exc:
                 return self._target_error_response(run, provider_requested, model_info, task_type, exc)
             fallback_used = fallback_used or bool(opening_result.fallback_used)
-            latency_ms = round((time.perf_counter() - started) * 1000 + 90, 2)
+            latency_ms = round((time.perf_counter() - started) * 1000, 2)
             opening_score = self._score_opening_turn(task_payload, case_payload, opening_result.content, latency_ms)
             memory_state = update_memory_state(
                 memory_state,
@@ -177,7 +177,7 @@ class EvaluationService:
                 return self._target_error_response(run, provider_requested, model_info, task_type, exc, commit=False)
             assistant_message = target_result.content
             fallback_used = fallback_used or bool(target_result.fallback_used)
-            latency_ms = round((time.perf_counter() - started) * 1000 + 120 + turn_index * 17, 2)
+            latency_ms = round((time.perf_counter() - started) * 1000, 2)
 
             turn_history = history + [
                 {
@@ -408,7 +408,7 @@ class EvaluationService:
                 opening_message = opening_result.content
                 fallback_used = fallback_used or bool(opening_result.fallback_used)
                 yield from self._assistant_delta_events(0, opening_message, message_phase="opening")
-                latency_ms = round((time.perf_counter() - started) * 1000 + 90, 2)
+                latency_ms = round((time.perf_counter() - started) * 1000, 2)
                 opening_score = self._score_opening_turn(task_payload, case_payload, opening_message, latency_ms)
                 memory_state = update_memory_state(
                     memory_state,
@@ -452,6 +452,7 @@ class EvaluationService:
                         "current_stage": opening_score.get("current_stage", "opening"),
                         "memory_state": memory_state,
                         "score": opening_score.get("score", 0),
+                        "latency_ms": latency_ms,
                         "summary": "本轮评分完成",
                     }
                 )
@@ -531,7 +532,7 @@ class EvaluationService:
                 fallback_used = fallback_used or bool(target_result.fallback_used)
                 yield from self._assistant_delta_events(turn_index, assistant_message)
 
-                latency_ms = round((time.perf_counter() - started) * 1000 + 120 + turn_index * 17, 2)
+                latency_ms = round((time.perf_counter() - started) * 1000, 2)
                 turn_history = history + [
                     {
                         "turn_index": turn_index,
@@ -628,13 +629,13 @@ class EvaluationService:
                 self.session.add(message)
                 self.session.commit()
                 self.session.refresh(message)
-                failed_rules = list(turn_score.get("missed_rules", [])) + list(turn_score.get("violated_rules", []))
+                lifecycle_failed = turn_score.get("failed_rules", []) or list(turn_score.get("missed_rules", [])) + list(turn_score.get("violated_rules", []))
                 yield self._sse_event(
                     {
                         "event": "rule_result",
                         "turn_index": turn_index,
                         "matched_rules": turn_score.get("matched_rules", []),
-                        "failed_rules": failed_rules,
+                        "failed_rules": lifecycle_failed,
                         "pending_rules": turn_score.get("pending_rules", []),
                         "untriggered_rules": turn_score.get("untriggered_rules", []),
                         "not_applicable_rules": turn_score.get("not_applicable_rules", []),
@@ -644,6 +645,7 @@ class EvaluationService:
                         "current_stage": turn_score.get("current_stage", ""),
                         "memory_state": memory_state,
                         "score": turn_score.get("score", 0),
+                        "latency_ms": latency_ms,
                         "summary": "本轮评分完成",
                     }
                 )

@@ -4,6 +4,7 @@ import json
 import logging
 import re
 import urllib.error
+import urllib.parse
 import urllib.request
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Tuple
@@ -23,6 +24,11 @@ logger = logging.getLogger(__name__)
 LEGACY_PROVIDER_ALIASES = {
     "mock_baseline": "mock_fallback",
     "mock_strong": "mock_fallback",
+    "qianwen": "openai_compatible",
+    "qwen": "openai_compatible",
+    "dashscope": "openai_compatible",
+    "tongyi": "openai_compatible",
+    "openai-compatible": "openai_compatible",
 }
 SUPPORTED_TARGET_PROVIDERS = {"mock_fallback", "openai_compatible", "custom_endpoint"}
 
@@ -85,8 +91,8 @@ class TargetModelClient:
         else:
             self.model_name = (normalized_model_name or settings.target_model_name or self.provider).strip() or self.provider
         self.api_key = settings.target_model_api_key or ""
-        self.base_url = (settings.target_model_base_url or "").rstrip("/")
-        self.endpoint = settings.target_model_endpoint or ""
+        self.base_url = self._clean_env_url(settings.target_model_base_url).rstrip("/")
+        self.endpoint = self._clean_env_url(settings.target_model_endpoint)
         self.allow_fallback = bool(settings.target_model_allow_fallback)
 
     def generate_reply(
@@ -175,7 +181,8 @@ class TargetModelClient:
     ) -> TargetModelResult:
         task_type = self.infer_task_type(task_payload, case_payload)
         opening_line = self.opening_line_for_task(task_payload, case_payload)
-        retrieved_knowledge = retrieve_knowledge(task_payload, opening_line or "开场白")
+        retrieved = retrieve_knowledge(task_payload, opening_line or "开场白")
+        retrieved_knowledge = [k for k in retrieved if k.get("chunk_type") == "opening"]
         call_chain = [
             "POST /api/runs/start",
             "EvaluationService.start_evaluation",
@@ -385,7 +392,7 @@ class TargetModelClient:
                 elif not self._has_any(assistant_text, ["其他流程不变", "流程不变"]):
                     reply = "其他流程不变。"
                 else:
-                    reply = "您之前选的是标准直播，但我们后台其实已为您走低延迟线路以保障质量，您知道吗？"
+                    reply = "后台已走低延迟，您知道吗？"
             elif self._has_any(last_user, ["变化", "什么变化", "改了什么", "升级了什么"]):
                 reply = "发布页以后分标准和低延迟两个选项。"
             elif "已说明发布页升级" not in said:
@@ -397,7 +404,7 @@ class TargetModelClient:
             elif not self._has_any(assistant_text, ["其他流程不变", "流程不变"]):
                 reply = "其他流程不变。"
             else:
-                reply = "您之前选的是标准直播，但我们后台其实已为您走低延迟线路以保障质量，您知道吗？"
+                reply = "后台已走低延迟，您知道吗？"
         elif stage == "usage":
             reply = "发课时选低延迟即可。"
         elif stage == "flow_change":
@@ -504,7 +511,7 @@ class TargetModelClient:
             should_close = True
         elif stage == "accepted":
             if "已询问知情" not in said:
-                reply = "您之前选的是标准直播，但我们后台其实已为您走低延迟线路以保障质量，您知道吗？"
+                reply = "后台已走低延迟，您知道吗？"
             else:
                 reply = "祝课程顺利，招生满满。"
                 should_close = True
@@ -514,7 +521,7 @@ class TargetModelClient:
             elif "已确认负责人" not in said:
                 reply = "请问您是负责人吗？"
             elif "已询问知情" not in said:
-                reply = "您之前选的是标准直播，但我们后台其实已为您走低延迟线路以保障质量，您知道吗？"
+                reply = "后台已走低延迟，您知道吗？"
             elif "已说明发布页升级" not in said:
                 reply = "我们直播产品升级了。"
             elif not self._has_any(assistant_text, ["低延迟选项", "低延迟直播选项", "新增低延迟", "独立的低延迟"]):
@@ -675,6 +682,12 @@ class TargetModelClient:
         user_asked_config = self._has_any(last_user, ["哪里", "配置", "怎么选", "在哪里选", "选项", "第三方", "SaaS", "Web", "校务"])
         if jumps_to_publish_method and not has_upgrade_context and not user_asked_config:
             hard_invalid = True
+        if not hard_invalid and stage == "live_difference":
+            repaired = self._repair_course_difference_reply(text, assistant_text)
+            if repaired:
+                return repaired, False, repaired != text
+        if not hard_invalid and stage == "fee" and not self._course_fee_reply_complete(text):
+            return "低延迟费用略高，以页面为准。", False, text != "低延迟费用略高，以页面为准。"
         if stage == "driver":
             if "稍后再打" in text and not self._has_any(text, ["直播", "费用", "配置", "升级"]):
                 return "那我稍后再打。", True, text != "那我稍后再打。"
@@ -701,7 +714,7 @@ class TargetModelClient:
                     return "发课时选低延迟即可。", False
                 if not self._has_any(assistant_text, ["其他流程不变", "流程不变"]):
                     return "其他流程不变。", False
-                return "您之前选的是标准直播，但我们后台其实已为您走低延迟线路以保障质量，您知道吗？", False
+                return "后台已走低延迟，您知道吗？", False
             if self._has_any(last_user, ["变化", "什么变化", "改了什么", "升级了什么"]):
                 return "发布页以后分标准和低延迟两个选项。", False
             if "已说明发布页升级" not in said:
@@ -712,7 +725,7 @@ class TargetModelClient:
                 return "发课时选低延迟即可。", False
             if not self._has_any(assistant_text, ["其他流程不变", "流程不变"]):
                 return "其他流程不变。", False
-            return "您之前选的是标准直播，但我们后台其实已为您走低延迟线路以保障质量，您知道吗？", False
+            return "后台已走低延迟，您知道吗？", False
         if stage == "usage":
             return "发课时选低延迟即可。", False
         if stage == "flow_change":
@@ -749,7 +762,7 @@ class TargetModelClient:
             return "进【我的】。", False
         if stage == "fee":
             if self._has_any(last_user, ["费用会不会更高", "价格", "贵", "费用高"]):
-                return "低延迟费用略高。", False
+                return "低延迟费用略高，以页面为准。", False
             return "学员端有附加费吗？", False
         if stage == "coupon":
             return "优惠券不能承诺。", False
@@ -757,7 +770,7 @@ class TargetModelClient:
             return "企业微信加您，请验证。", False
         if stage == "accepted":
             if "已询问知情" not in said:
-                return "您之前选的是标准直播，但我们后台其实已为您走低延迟线路以保障质量，您知道吗？", False
+                return "后台已走低延迟，您知道吗？", False
             return "祝课程顺利，招生满满。", True
         if self._has_any(last_user, ["升级", "变", "页面"]):
             return "发布页新增了独立的低延迟直播选项。", False
@@ -766,6 +779,31 @@ class TargetModelClient:
         if not self._has_any(assistant_text, ["低延迟选项", "低延迟直播选项", "新增低延迟", "独立的低延迟"]):
             return "发布页新增了独立的低延迟直播选项。", False
         return "Web还是第三方发布？", False
+
+    def _repair_course_difference_reply(self, text: str, assistant_text: str) -> str:
+        if self._course_difference_reply_has_required_fact(text):
+            return ""
+        return self._course_live_difference_reply(assistant_text)
+
+    def _course_difference_reply_has_required_fact(self, text: str) -> bool:
+        return self._has_any(
+            text,
+            [
+                "5-10秒",
+                "5到10秒",
+                "5 到 10 秒",
+                "标准延迟",
+                "标准直播延迟",
+                "1-2秒",
+                "1到2秒",
+                "1 到 2 秒",
+                "低延迟约",
+                "低延迟1-2秒",
+            ],
+        )
+
+    def _course_fee_reply_complete(self, text: str) -> bool:
+        return self._has_any(text, ["费用", "价格", "略高", "更高", "页面为准", "附加费", "加速费", "不能承诺"])
 
     def generate_generic_outbound_reply(
         self,
@@ -794,7 +832,7 @@ class TargetModelClient:
             if task_type == "rider_outbound":
                 return self._rider_contract_requirement_reply()
             if task_type == "course_platform_outbound":
-                return "麻烦转达负责人，直播升级了。"
+                return "麻烦您帮忙转达负责人，直播发布页升级了。"
         return normalized
 
     def reply_violates_task_type(self, content: str, task_type: str) -> bool:
@@ -947,14 +985,26 @@ class TargetModelClient:
         memory_state: Dict[str, Any] | None = None,
     ) -> str:
         if provider == "openai_compatible":
+            if not self.api_key or not self.base_url:
+                error = self._openai_config_error()
+                if not self.allow_fallback:
+                    raise error
+                logger.warning("openai_compatible selected but config is incomplete; using mock fallback")
+                return ""
             try:
                 return self._call_openai_compatible(task_payload, case_payload, messages, retrieved_knowledge, memory_state)
             except TargetModelError:
                 if not self.allow_fallback:
                     raise
-                logger.exception("openai_compatible target model failed; falling back to mock because fallback is allowed")
+                logger.exception("openai_compatible target model failed; falling back to mock")
                 return ""
-        if provider == "custom_endpoint" and self.endpoint:
+        if provider == "custom_endpoint":
+            if not self.endpoint:
+                error = TargetModelError("missing_target_model_endpoint", "TARGET_MODEL_ENDPOINT is not configured")
+                if not self.allow_fallback:
+                    raise error
+                logger.warning("custom_endpoint selected but endpoint is not configured; using mock fallback")
+                return ""
             return self._call_custom_endpoint(task_payload, case_payload, messages, retrieved_knowledge, memory_state)
         return ""
 
@@ -967,6 +1017,12 @@ class TargetModelClient:
         memory_state: Dict[str, Any] | None = None,
     ) -> str:
         if self.provider == "openai_compatible":
+            if not self.api_key or not self.base_url:
+                error = self._openai_config_error()
+                if not self.allow_fallback:
+                    raise error
+                logger.warning("openai_compatible selected but config is incomplete; using mock opening")
+                return ""
             try:
                 return self._call_openai_chat(
                     messages=self._opening_messages(
@@ -981,9 +1037,15 @@ class TargetModelClient:
             except TargetModelError:
                 if not self.allow_fallback:
                     raise
-                logger.exception("openai_compatible opening call failed; falling back because fallback is allowed")
+                logger.exception("openai_compatible opening call failed; falling back to mock")
                 return ""
-        if self.provider == "custom_endpoint" and self.endpoint:
+        if self.provider == "custom_endpoint":
+            if not self.endpoint:
+                error = TargetModelError("missing_target_model_endpoint", "TARGET_MODEL_ENDPOINT is not configured")
+                if not self.allow_fallback:
+                    raise error
+                logger.warning("custom_endpoint selected but endpoint is not configured; using mock opening")
+                return ""
             payload = {
                 "task": task_payload,
                 "case": case_payload,
@@ -1004,6 +1066,11 @@ class TargetModelClient:
                 headers["Authorization"] = f"Bearer {self.api_key}"
             return self._post_json(self.endpoint, payload, headers)
         return ""
+
+    def _openai_config_error(self) -> TargetModelError:
+        if not self.api_key:
+            return TargetModelError("missing_target_model_api_key", "TARGET_MODEL_API_KEY is not configured")
+        return TargetModelError("missing_target_model_base_url", "TARGET_MODEL_BASE_URL is not configured")
 
     def _provider_fallback(self, provider: str) -> bool:
         return provider != "mock_fallback"
@@ -1257,7 +1324,7 @@ class TargetModelClient:
                 )
         except Exception as exc:
             logger.exception("target_model_openai_call provider=openai_compatible provider_call_success=false")
-            raise TargetModelError("openai_compatible_call_failed", str(exc)) from exc
+            raise TargetModelError(self._openai_error_code(exc), self._openai_error_message(exc)) from exc
 
         content = ""
         try:
@@ -1272,6 +1339,54 @@ class TargetModelClient:
             len(content),
         )
         return content
+
+    def _openai_error_code(self, exc: Exception) -> str:
+        text = f"{exc.__class__.__name__} {exc}".lower()
+        if "connection" in text or "connect" in text or "timeout" in text:
+            return "openai_compatible_connection_failed"
+        if "401" in text or "unauthorized" in text or "authentication" in text or "api key" in text:
+            return "openai_compatible_auth_failed"
+        if "404" in text or "not found" in text or "model" in text:
+            return "openai_compatible_model_or_url_failed"
+        return "openai_compatible_call_failed"
+
+    def _openai_error_message(self, exc: Exception) -> str:
+        raw = str(exc).strip() or exc.__class__.__name__
+        base_url = self._safe_url_for_message(self.base_url) or "未配置"
+        model_name = self.model_name or "未配置"
+        hints = [
+            "外接模型连接失败：后端无法连接 openai_compatible 接口。",
+            f"当前 Base URL={base_url}，Model={model_name}。",
+        ]
+        if self._looks_like_non_openai_compatible_url(self.base_url):
+            hints.append("当前 Base URL 看起来不像 OpenAI-compatible base_url，请不要填写完整 /chat/completions，也不要使用非兼容域名。")
+        if "qianwenapi.com" in (self.base_url or "").lower():
+            hints.append("如果你接的是通义千问/Qwen，建议改用官方 OpenAI-compatible 地址，例如 https://dashscope.aliyuncs.com/compatible-mode/v1 或国际站 https://dashscope-intl.aliyuncs.com/compatible-mode/v1。")
+        hints.append("请检查后端 .env 中 TARGET_MODEL_BASE_URL、TARGET_MODEL_NAME、TARGET_MODEL_API_KEY，以及本机网络/代理/证书。")
+        hints.append(f"原始错误：{raw}")
+        return " ".join(hints)
+
+    def _safe_url_for_message(self, url: str) -> str:
+        value = self._clean_env_url(url)
+        if not value:
+            return ""
+        parsed = urllib.parse.urlparse(value)
+        if not parsed.scheme or not parsed.netloc:
+            return value
+        return urllib.parse.urlunparse((parsed.scheme, parsed.netloc, parsed.path.rstrip("/"), "", "", ""))
+
+    def _looks_like_non_openai_compatible_url(self, url: str) -> bool:
+        value = self._clean_env_url(url).lower()
+        if not value:
+            return False
+        return value.endswith("/chat/completions") or ("/v1" not in value and "compatible-mode" not in value)
+
+    def _clean_env_url(self, value: Any) -> str:
+        text = str(value or "").strip().strip("\"'")
+        for marker in [" #", "\t#"]:
+            if marker in text:
+                text = text.split(marker, 1)[0].strip()
+        return text.strip().strip("\"'")
 
     def _openai_compatible_messages(self, messages: List[Dict[str, str]]) -> List[Dict[str, str]]:
         parts: List[str] = []
@@ -1435,24 +1550,82 @@ class TargetModelClient:
         retrieved_knowledge: List[Dict[str, Any]],
         memory_state: Dict[str, Any] | None = None,
     ) -> str:
+        task_type = self.infer_task_type(task_payload, case_payload)
+        reply_contract = self._reply_contract(task_payload, case_payload, messages, memory_state)
         payload = {
             "task": task_payload,
             "case": case_payload,
             "messages": messages,
             "model": self.model_name,
-            "task_type": self.infer_task_type(task_payload, case_payload),
+            "task_type": task_type,
             "retrieved_knowledge": retrieved_knowledge,
             "memory_state": compact_memory_for_prompt(memory_state),
             "knowledge_instruction": "以下是本轮可用知识片段，请优先依据这些内容回答。",
+            "reply_contract": reply_contract,
+            "prompt_messages": self._messages(task_payload, case_payload, messages, retrieved_knowledge, memory_state),
         }
-        if self.infer_task_type(task_payload, case_payload) == "course_platform_outbound":
+        if task_type == "course_platform_outbound":
             payload["response_policy"] = self._course_response_policy()
-        if self.infer_task_type(task_payload, case_payload) == "rider_outbound":
+        if task_type == "rider_outbound":
             payload["rider_name"] = self._rider_name_for_case(case_payload)
         headers = {"Content-Type": "application/json"}
         if self.api_key:
             headers["Authorization"] = f"Bearer {self.api_key}"
         return self._post_json(self.endpoint, payload, headers)
+
+    def _reply_contract(
+        self,
+        task_payload: Dict[str, Any],
+        case_payload: Dict[str, Any],
+        messages: List[Dict[str, Any]],
+        memory_state: Dict[str, Any] | None = None,
+    ) -> Dict[str, Any]:
+        task_type = self.infer_task_type(task_payload, case_payload)
+        if task_type != "course_platform_outbound":
+            return {}
+        dialogue_state = analyze_dialogue_state(task_payload, case_payload, messages)
+        stage = str(dialogue_state.get("current_stage") or "")
+        said = set(dialogue_state.get("assistant_said_topics") or [])
+        last_user = str(messages[-1].get("user_message", "") or "") if messages else ""
+        assistant_text = "\n".join(str(item.get("assistant_message", "") or "") for item in messages)
+        expected_reply, should_close = self._course_stage_fallback(stage, said, last_user, assistant_text)
+        notes = {
+            "owner": "负责人确认后先说明直播产品升级和新增低延迟直播选项，不要跳到配置路径。",
+            "upgrade_intro": "先回答升级内容：发布页以后分标准和低延迟两个选项。",
+            "awareness_check": "说明低延迟用于保障音画同步或互动，不替商家回答知不知道。",
+            "live_difference": "至少说清一个关键事实：标准直播费用低且延迟5-10秒，或低延迟1-2秒且互动更流畅。",
+            "fee": "说明低延迟费用略高，以页面为准；不能承诺优惠券或折扣。",
+            "coupon": "明确不能承诺优惠券或折扣，再回到费用/页面规则。",
+            "config_path": "先确认 Web 控制台还是第三方系统，再分步给路径。",
+            "third_party_path": "第三方路径要一步一答：进【我的】、直播平台管理、选择【直播平台】、勾选低延迟并保存。",
+            "web_path": "Web 控制台可在直播发布页直接选择低延迟。",
+            "visibility_check": "如果没看到低延迟，继续引导配置路径或明天查看，不要泛泛说后台处理。",
+            "enterprise_wechat": "只说明企业微信添加或号码验证，不索要敏感 API Key。",
+            "busy": "先争取 1 分钟并说重点，后续只给一个信息点。",
+            "driver": "只回复那我稍后再打，并结束通话。",
+            "non_owner": "请对方帮忙转达负责人直播发布页升级，不继续深聊配置和费用。",
+        }
+        return {
+            "task_type": task_type,
+            "current_stage": stage,
+            "last_user_message": last_user,
+            "recommended_reply": expected_reply,
+            "should_close_if_used": should_close,
+            "stage_note": notes.get(stage, "按当前用户问题先回答，再推进一个未覆盖流程点。"),
+            "style": "只输出一句被测模型话术；不要输出 JSON；不要替商家回答；说完停下来等商家回应。",
+            "memory_state": compact_memory_for_prompt(memory_state),
+        }
+
+    def _reply_contract_text(self, contract: Dict[str, Any]) -> str:
+        if not contract:
+            return ""
+        return (
+            "本轮回复契约："
+            f"当前阶段={contract.get('current_stage', '')}；"
+            f"阶段要求={contract.get('stage_note', '')}；"
+            f"推荐下一句={contract.get('recommended_reply', '')}；"
+            "若用户当前问题更具体，先答当前问题，但仍只能答一个信息点。"
+        )
 
     def _messages(
         self,
@@ -1463,6 +1636,7 @@ class TargetModelClient:
         memory_state: Dict[str, Any] | None = None,
     ) -> List[Dict[str, str]]:
         task_type = self.infer_task_type(task_payload, case_payload)
+        reply_contract = self._reply_contract(task_payload, case_payload, messages, memory_state)
         guardrails = {
             "rider_outbound": {
                 "allowed": "飞毛腿合同、生效、开始配送、X 单、Y 单、合同影响、派单、安全、雨天、资格、报名排名、拒单、取消、超时、App 取消、同事确认后回电",
@@ -1489,6 +1663,7 @@ class TargetModelClient:
         )
         if task_type == "course_platform_outbound":
             system += self._course_response_policy()
+            system += self._reply_contract_text(reply_contract)
         elif task_type == "rider_outbound":
             system += (
                 "除第0轮开场外，每次回复控制在30字内；已说过的内容不要原样重复，应推进下一个未覆盖流程点。"
@@ -1525,6 +1700,7 @@ class TargetModelClient:
             "case": case_context,
             "retrieved_knowledge": retrieved_knowledge,
             "memory_state": compact_memory_for_prompt(memory_state),
+            "reply_contract": reply_contract,
             "knowledge_instruction": "以下是本轮可用知识片段，请优先依据这些内容回答。",
         }
         outbound_messages = [
@@ -1575,7 +1751,7 @@ class TargetModelClient:
             "每次只说一个信息点；说完必须停下来等商家回应；"
             "负责人确认后先说：直播产品升级了，新增低延迟直播选项。"
             "再按：发布页以后分标准和低延迟两个选项。/发课时选低延迟即可。/其他流程不变。"
-            "之后询问：您之前选的是标准直播，但我们后台其实已为您走低延迟线路以保障质量，您知道吗？"
+            "之后先询问：您之前选标准直播，对吗？再询问：后台已走低延迟，您知道吗？"
             "直播区别分轮回答：标准直播费用低，延迟5-10秒。/适合大班课。/低延迟1-2秒，互动更流畅。/适合小班和实操课。"
             "只生成被测模型该说的话，不要替商家回答知道/不知道、Web/SaaS、是否已显示等分支；"
             "条件分支只在当前步骤内处理，处理后回到主流程；"

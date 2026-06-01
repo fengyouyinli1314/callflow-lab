@@ -680,6 +680,7 @@ const handleStreamEvent = async (event) => {
     currentStageMessage.value = event.summary || '本轮评分完成'
     upsertStreamTurn(event.turn_index, {
       rule_score: event.score ?? 0,
+      latency_ms: event.latency_ms ?? 0,
       matched_rules: event.matched_rules || [],
       missed_rules: event.failed_rules || [],
       violated_rules: [],

@@ -119,10 +119,11 @@ class RuleJudge:
     ) -> Dict[str, Any]:
         result = self._evaluate_rules(task_payload or {}, case_payload, history)
         result = self._apply_turn_rule_lifecycle(task_payload or {}, case_payload, history, result)
-        required_count = max(len(result.get("required_rules", [])), 1)
+        pending_count = len(result.get("pending_rules", []))
+        active_required = max(len(result.get("required_rules", [])) - pending_count, 1)
         hidden_violated = result.get("hidden_guardrail_rules", {}).get("violated", [])
         score = (
-            100 * len(result["matched_rules"]) / required_count
+            100 * len(result["matched_rules"]) / active_required
             - len(result["violated_rules"]) * 22
             - len(hidden_violated) * 18
         )
@@ -455,19 +456,19 @@ class RuleJudge:
         trigger_text = self._trigger_context_text(case_payload, messages)
         recoverable: List[str] = []
         for rule in rule_result.get("missed_rules", []):
-            if rule in {"是否回复自然简短", "是否确认骑手身份", "是否告知飞毛腿合同已生效"}:
-                continue
-            if self._rider_rule_directly_requested(rule, trigger_text):
+            if rule in {"是否回复自然简短"}:
                 continue
             if self._has_any(
                 rule,
                 [
+                    "是否告知飞毛腿合同已生效",
                     "是否询问是否可以开始配送",
                     "是否说明单日/多日合同完成要求",
                     "是否说明不完成可能影响合同或派单",
-                    "是否安抚不想配送或情绪不满的骑手",
+                    "是否根据骑手态度鼓励挽留或安抚",
                     "是否提醒安全",
-                    "是否说明报名排名不是站长干预",
+                    "是否说明报名按排名进行",
+                    "是否说明不是站长干预",
                     "是否提醒减少拒单取消超时有助于保住资格",
                 ],
             ):
@@ -1656,7 +1657,7 @@ class RuleJudge:
             (["非负责人时是否请其转达"], ["转达", "麻烦您转达", "帮忙转达", "请其转达"]),
             (["标准直播", "低延迟直播", "直播选项"], ["标准直播", "低延迟直播", "两个独立选项"]),
             (["新增“标准直播”和“低延迟直播”"], ["标准直播", "低延迟直播", "新增", "两个独立选项"]),
-            (["知道低延迟直播"], ["知道低延迟", "了解低延迟", "是否知道", "是否了解"]),
+            (["知道低延迟直播"], ["知道低延迟", "了解低延迟", "是否知道", "是否了解", "后台已走低延迟", "您知道吗"]),
             (["音画同步", "实时互动"], ["音画同步", "实时互动", "互动更流畅", "低延迟"]),
             (["适用场景", "低延迟直播适用"], ["实时互动", "互动更流畅", "小班课", "实操课", "1-2 秒"]),
             (["低延迟直播适合实时互动"], ["低延迟", "实时互动", "互动更流畅", "小班课", "实操课"]),

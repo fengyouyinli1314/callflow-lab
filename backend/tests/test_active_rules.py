@@ -451,7 +451,7 @@ def test_course_external_reply_repaired_when_skipping_upgrade_to_publish_method(
         ],
     )
 
-    assert result.content == "发布页新增了独立的低延迟直播选项。"
+    assert result.content == "发布页以后分标准和低延迟两个选项。"
 
 
 def test_course_external_compliant_reply_is_not_templated():
@@ -472,6 +472,45 @@ def test_course_external_compliant_reply_is_not_templated():
 
     assert result.content == "标准更便宜，低延迟略高。"
     assert result.fallback_used is False
+
+
+def test_course_external_difference_reply_without_delay_is_repaired():
+    client = TargetModelClient(provider="mock_fallback")
+    client._provider_reply = lambda *args, **kwargs: "标准更便宜，低延迟更顺。"
+
+    result = client.generate_reply(
+        {"task_type": "course_platform_outbound", "name": "课程直播产品升级外呼评测"},
+        {"name": "课程直播产品升级外呼用例", "initial_message": "我是负责人，你说吧。", "case_mode": "full_flow"},
+        "区别是什么？",
+        [
+            {"turn_index": 0, "user_message": "", "assistant_message": "您好，请问您是负责人吗？"},
+            {"turn_index": 1, "user_message": "我是负责人，你说吧。", "assistant_message": "直播产品升级，新增低延迟直播。"},
+            {"turn_index": 2, "user_message": "不知道。", "assistant_message": "前端没开放，先保障音画同步。"},
+            {"turn_index": 3, "user_message": "你先说升级了什么。", "assistant_message": "发布页分标准直播和低延迟直播。"},
+        ],
+    )
+
+    assert result.content == "标准直播费用低，延迟5-10秒。"
+    assert result.fallback_used is True
+
+
+def test_course_external_fee_reply_without_fee_rule_is_repaired():
+    client = TargetModelClient(provider="mock_fallback")
+    client._provider_reply = lambda *args, **kwargs: "可以按需选择。"
+
+    result = client.generate_reply(
+        {"task_type": "course_platform_outbound", "name": "课程直播产品升级外呼评测"},
+        {"name": "课程直播产品升级外呼用例", "initial_message": "我是负责人，你说吧。", "case_mode": "full_flow"},
+        "费用会不会更高？",
+        [
+            {"turn_index": 0, "user_message": "", "assistant_message": "您好，请问您是负责人吗？"},
+            {"turn_index": 1, "user_message": "我是负责人，你说吧。", "assistant_message": "直播产品升级，新增低延迟直播。"},
+            {"turn_index": 2, "user_message": "你先说升级了什么。", "assistant_message": "发布页分标准直播和低延迟直播。"},
+        ],
+    )
+
+    assert result.content == "低延迟费用略高，以页面为准。"
+    assert result.fallback_used is True
 
 
 def test_course_external_long_reply_is_kept_for_interruption_scoring():

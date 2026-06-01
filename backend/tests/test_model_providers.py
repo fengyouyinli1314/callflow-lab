@@ -29,10 +29,35 @@ def test_mock_fallback_model_name_stays_fallback():
     assert client.model_info()["model_name"] == "mock_fallback"
 
 
+def test_qianwen_provider_alias_maps_to_openai_compatible(monkeypatch):
+    monkeypatch.setattr(settings, "target_model_name", "qwen-plus")
+    client = TargetModelClient("qianwen")
+
+    assert client.model_info()["model_provider"] == "openai_compatible"
+    assert client.model_info()["model_name"] == "qwen-plus"
+
+
 def test_openai_compatible_model_name_comes_from_env():
     settings.target_model_name = "qwen-plus"
     client = TargetModelClient("openai_compatible", "wrong-model")
     assert client.model_info()["model_name"] == "qwen-plus"
+
+
+def test_model_provider_list_cleans_inline_url_comments(client, monkeypatch):
+    monkeypatch.setattr(settings, "target_model_provider", "qianwen")
+    monkeypatch.setattr(settings, "target_model_api_key", "test-key")
+    monkeypatch.setattr(settings, "target_model_base_url", "https://dashscope.aliyuncs.com/compatible-mode/v1  # comment")
+    monkeypatch.setattr(settings, "target_model_endpoint", "https://example.test/reply  # comment")
+
+    response = client.get("/api/model-providers")
+
+    assert response.status_code == 200
+    providers = response.json()
+    openai_provider = next(item for item in providers if item["name"] == "openai_compatible")
+    custom_provider = next(item for item in providers if item["name"] == "custom_endpoint")
+    assert openai_provider["active"] is True
+    assert openai_provider["base_url"] == "https://dashscope.aliyuncs.com/compatible-mode/v1"
+    assert custom_provider["endpoint"] == "https://example.test/reply"
 
 
 def test_openai_compatible_chat_prefers_stream_true(monkeypatch):
@@ -101,6 +126,34 @@ def test_openai_compatible_folds_system_role_into_user(monkeypatch):
     assert content == "OK"
     assert calls and all(item["role"] in {"user", "assistant"} for item in calls[0]["messages"])
     assert len(calls[0]["messages"]) == 1
+
+
+def test_openai_connection_error_message_is_actionable(monkeypatch):
+    class FakeCompletions:
+        def create(self, **_kwargs):
+            raise RuntimeError("Connection error.")
+
+    class FakeOpenAI:
+        def __init__(self, **_kwargs):
+            self.chat = SimpleNamespace(completions=FakeCompletions())
+
+    monkeypatch.setattr("app.services.target_model_client.OpenAI", FakeOpenAI)
+    monkeypatch.setattr(settings, "target_model_api_key", "test-key")
+    monkeypatch.setattr(settings, "target_model_base_url", "https://openai.qianwenapi.com")
+    monkeypatch.setattr(settings, "target_model_name", "qianwen")
+
+    client = TargetModelClient("openai_compatible")
+    try:
+        client._call_openai_chat([{"role": "user", "content": "ping"}], temperature=0)
+    except TargetModelError as exc:
+        assert exc.code == "openai_compatible_connection_failed"
+        assert "外接模型连接失败" in exc.message
+        assert "Base URL=https://openai.qianwenapi.com" in exc.message
+        assert "dashscope.aliyuncs.com/compatible-mode/v1" in exc.message
+        assert "TARGET_MODEL_BASE_URL" in exc.message
+        assert "原始错误：Connection error." in exc.message
+    else:
+        raise AssertionError("expected TargetModelError")
 
 
 def test_opening_reply_sanitizes_overlong_provider_content():
@@ -349,6 +402,54 @@ def test_rider_prompt_contains_unwilling_faq_requirements():
     assert "无法连续配送 Y 天" in prompt
     assert "合同及派单" in prompt
     assert "每单多 +$ 元" in prompt
+
+
+def test_course_prompt_contains_reply_contract():
+    client = TargetModelClient("openai_compatible")
+    messages = client._messages(
+        {"task_type": "course_platform_outbound", "name": "课程直播产品升级外呼评测"},
+        {"name": "直播区别触发验证", "initial_message": "标准直播和低延迟直播有什么区别？"},
+        [{"turn_index": 1, "user_message": "标准直播和低延迟直播有什么区别？", "assistant_message": ""}],
+        [{"title": "标准直播与低延迟直播区别", "content": "标准直播延迟5-10秒；低延迟直播1-2秒，互动更流畅。"}],
+    )
+
+    system_prompt = messages[0]["content"]
+    task_context = messages[1]["content"]
+
+    assert "本轮回复契约" in system_prompt
+    assert "当前阶段=live_difference" in system_prompt
+    assert "标准直播费用低，延迟5-10秒。" in system_prompt
+    assert "reply_contract" in task_context
+    assert "retrieved_knowledge" in task_context
+
+
+def test_custom_endpoint_payload_includes_prompt_messages_and_reply_contract(monkeypatch):
+    captured = {}
+
+    def fake_post_json(url, payload, headers):
+        captured["url"] = url
+        captured["payload"] = payload
+        captured["headers"] = headers
+        return "标准直播费用低，延迟5-10秒。"
+
+    monkeypatch.setattr(settings, "target_model_endpoint", "https://example.test/reply")
+    client = TargetModelClient("custom_endpoint")
+    monkeypatch.setattr(client, "_post_json", fake_post_json)
+
+    content = client._call_custom_endpoint(
+        {"task_type": "course_platform_outbound", "name": "课程直播产品升级外呼评测"},
+        {"name": "直播区别触发验证", "initial_message": "标准直播和低延迟直播有什么区别？"},
+        [{"turn_index": 1, "user_message": "标准直播和低延迟直播有什么区别？", "assistant_message": ""}],
+        [{"title": "标准直播与低延迟直播区别", "content": "标准直播延迟5-10秒；低延迟直播1-2秒，互动更流畅。"}],
+    )
+
+    payload = captured["payload"]
+    assert content == "标准直播费用低，延迟5-10秒。"
+    assert captured["url"] == "https://example.test/reply"
+    assert payload["reply_contract"]["current_stage"] == "live_difference"
+    assert payload["reply_contract"]["recommended_reply"] == "标准直播费用低，延迟5-10秒。"
+    assert payload["prompt_messages"][0]["role"] == "system"
+    assert "本轮回复契约" in payload["prompt_messages"][0]["content"]
 
 
 def test_openai_compatible_missing_config_raises_without_fallback():

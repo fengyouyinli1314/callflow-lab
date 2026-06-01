@@ -33,6 +33,7 @@ PROVIDER_DESCRIPTIONS = {
 @router.get("")
 def list_model_providers() -> List[Dict[str, Any]]:
     active_provider = normalize_target_provider(settings.target_model_provider)
+    config_client = TargetModelClient(active_provider)
     providers = [
         _provider_row(
             name="mock_fallback",
@@ -46,7 +47,7 @@ def list_model_providers() -> List[Dict[str, Any]]:
             provider_type="openai_compatible",
             active_provider=active_provider,
             enabled=bool(settings.target_model_base_url and settings.target_model_api_key),
-            base_url=settings.target_model_base_url,
+            base_url=config_client._clean_env_url(settings.target_model_base_url),
             model_name=settings.target_model_name or "未配置",
             api_key_configured=bool(settings.target_model_api_key),
         ),
@@ -55,7 +56,7 @@ def list_model_providers() -> List[Dict[str, Any]]:
             provider_type="custom_endpoint",
             active_provider=active_provider,
             enabled=bool(settings.target_model_endpoint),
-            endpoint=settings.target_model_endpoint,
+            endpoint=config_client._clean_env_url(settings.target_model_endpoint),
             model_name=settings.target_model_name or "未配置",
             api_key_configured=bool(settings.target_model_api_key),
         ),
@@ -83,7 +84,8 @@ def test_model_provider(payload: ModelProviderTestRequest) -> Dict[str, Any]:
             "message": f"{legacy_note}mock_fallback 可用：本地兜底，仅保证流程跑通，非真实 AI 能力。",
         }
     if provider == "openai_compatible":
-        base_url = (payload.base_url or settings.target_model_base_url or "").strip()
+        client = TargetModelClient("openai_compatible")
+        base_url = client._clean_env_url(payload.base_url or settings.target_model_base_url)
         model_name = (payload.model_name or settings.target_model_name or "").strip()
         api_key_configured = bool(settings.target_model_api_key)
         if not (base_url and model_name and api_key_configured):
@@ -94,7 +96,6 @@ def test_model_provider(payload: ModelProviderTestRequest) -> Dict[str, Any]:
                 "error_message": "需要在后端 .env 配置 Base URL、Model Name 和 API Key。",
                 "message": "需要在后端 .env 配置 Base URL、Model Name 和 API Key。",
             }
-        client = TargetModelClient("openai_compatible")
         client.base_url = base_url.rstrip("/")
         client.model_name = model_name
         try:
@@ -113,7 +114,7 @@ def test_model_provider(payload: ModelProviderTestRequest) -> Dict[str, Any]:
             "message": "真实大模型 API 调用成功。",
         }
     if provider == "custom_endpoint":
-        endpoint = (payload.endpoint or settings.target_model_endpoint or "").strip()
+        endpoint = TargetModelClient("custom_endpoint")._clean_env_url(payload.endpoint or settings.target_model_endpoint)
         ok = bool(endpoint)
         return {
             "provider": provider,
