@@ -203,7 +203,7 @@ def _current_stage(task_type: str, last_user_message: str, case: Dict[str, Any])
             return "driver"
         if _has_any(last, ["忙", "没时间", "说重点"]):
             return "busy"
-        if _has_any(last, ["知道了", "明白", "没问题", "让负责人看", "记下", "先这样"]):
+        if _has_any(last, ["知道了", "明白", "没问题", "没有", "让负责人看", "记下", "先这样"]):
             return "accepted"
         if _has_any(last, ["企业微信", "加微信", "手机号", "怎么联系", "当前号码", "能加", "加不了", "不能加", "不可添加", "可添加"]):
             return "enterprise_wechat"

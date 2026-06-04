@@ -216,6 +216,49 @@ def test_rider_recoverable_flow_rule_is_pending_then_late_satisfied():
     assert "是否说明单日/多日合同完成要求" in final_result["late_satisfied_rules"]
 
 
+def test_conversation_score_is_capped_when_middle_turn_scores_are_low():
+    task = {"task_type": "rider_outbound", "name": "飞毛腿骑手合同生效外呼评测"}
+    case = {
+        "name": "飞毛腿骑手合同生效外呼用例",
+        "user_profile": "普通骑手，愿意配合。",
+        "initial_message": "是我，你说。",
+    }
+    messages = [
+        {
+            "turn_index": 0,
+            "user_message": "",
+            "assistant_message": "你好，请问是王师傅吗？我是站长。",
+            "rule_score": 100,
+            "detail": {"message_phase": "opening"},
+        },
+        {
+            "turn_index": 1,
+            "user_message": "是我，你说。",
+            "assistant_message": "飞毛腿合同已生效，可以开始配送吗？",
+            "rule_score": 40,
+        },
+        {
+            "turn_index": 2,
+            "user_message": "能跑，我今天可以上线。",
+            "assistant_message": "午晚高峰上线。单日X单多日Y单，完不成影响派单。",
+            "rule_score": 40,
+        },
+        {
+            "turn_index": 3,
+            "user_message": "飞毛腿名额站长能不能调整？",
+            "assistant_message": "名额按系统排名，非站长定；少拒单取消超时保资格。",
+            "rule_score": 100,
+        },
+    ]
+
+    result = RuleJudge().evaluate_conversation(task, case, messages)
+
+    assert result["metrics"]["turn_score_average"] == 60
+    assert result["metrics"]["low_turn_count"] == 2
+    assert result["metrics"]["response_quality"] <= 72
+    assert result["score"] < 90
+
+
 def test_rider_real_out_of_scope_question_triggers_callback_rule():
     task = {"task_type": "rider_outbound", "name": "飞毛腿骑手合同生效外呼评测"}
     case = {
@@ -269,6 +312,59 @@ def test_course_owner_first_turn_does_not_activate_driver_coupon_or_wechat_rules
     assert "结束确认" not in scored_text
     assert "优惠券" not in scored_text
     assert "企业微信" not in scored_text
+
+
+def test_course_completed_full_flow_does_not_leave_stage_rules_pending():
+    task = {"task_type": "course_platform_outbound", "name": "课程直播产品升级外呼评测"}
+    case = {
+        "name": "课程直播产品升级外呼用例",
+        "case_mode": "full_flow",
+        "user_profile": "机构负责人，完整了解升级、配置和费用。",
+        "initial_message": "我是负责人，你说吧。",
+    }
+    messages = [
+        {"turn_index": 0, "user_message": "", "assistant_message": "您好，请问您是贵培训机构/校区的负责人吗？"},
+        {"turn_index": 1, "user_message": "我是负责人，你说吧。", "assistant_message": "直播产品升级了，新增低延迟直播选项。"},
+        {"turn_index": 2, "user_message": "具体升级了什么？", "assistant_message": "发布页以后分标准和低延迟两个选项。"},
+        {"turn_index": 3, "user_message": "那我要怎么用？", "assistant_message": "发课时选低延迟即可。您之前选标准直播对吗？"},
+        {"turn_index": 4, "user_message": "其他流程变不变？", "assistant_message": "其他流程不变。标准直播费用低，延迟5-10秒。"},
+        {"turn_index": 5, "user_message": "嗯，知道了。", "assistant_message": "后台已走低延迟，您知道吗？"},
+        {"turn_index": 6, "user_message": "不知道。", "assistant_message": "前端当时未开放，临时开低延迟保障音画同步。"},
+        {"turn_index": 7, "user_message": "标准适合什么课？", "assistant_message": "适合大班课。"},
+        {"turn_index": 8, "user_message": "那低延迟具体强在哪？", "assistant_message": "低延迟1-2秒，互动更流畅。"},
+        {"turn_index": 9, "user_message": "低延迟适合哪类课？", "assistant_message": "适合小班和实操课。"},
+        {"turn_index": 10, "user_message": "低延迟价格会贵吗？", "assistant_message": "低延迟费用略高，以页面为准。"},
+        {"turn_index": 11, "user_message": "这个跟我发课入口有关吗？", "assistant_message": "有关。您是通过Web还是第三方发布？"},
+        {"turn_index": 12, "user_message": "SaaS系统B。", "assistant_message": "低延迟已显示吗？"},
+        {"turn_index": 13, "user_message": "没显示。", "assistant_message": "需要手动开通。先进【我的】。"},
+        {"turn_index": 14, "user_message": "我进去了，继续说。", "assistant_message": "点击【服务商/直播平台管理】。"},
+        {"turn_index": 15, "user_message": "收到，继续。", "assistant_message": "再选择【直播平台】。"},
+        {"turn_index": 16, "user_message": "可以，继续。", "assistant_message": "在【服务产品】下勾选低延迟直播，保存。"},
+        {"turn_index": 17, "user_message": "行，费用这块明白了。", "assistant_message": "稍后加您企业微信，麻烦通过一下。"},
+        {"turn_index": 18, "user_message": "学员端费用也要看吗？", "assistant_message": "学员端有附加费吗？"},
+        {"turn_index": 19, "user_message": "已设置费用。", "assistant_message": "麻烦确认低延迟直播也适用该费用。"},
+        {"turn_index": 20, "user_message": "后续怎么联系？", "assistant_message": "企业微信加您，请通过验证。"},
+        {"turn_index": 21, "user_message": "清楚了，先这样。", "assistant_message": "祝课程顺利，招生满满。"},
+    ]
+
+    result = RuleJudge().evaluate_conversation(task, case, messages)
+
+    assert result["current_stage"] == "closing"
+    assert "是否礼貌结束" in result["matched_rules"]
+    assert "是否确认是否还有问题" in result["matched_rules"]
+    assert "是否说明企业微信添加逻辑" in result["matched_rules"]
+    assert "全流程覆盖：结束确认" in result["matched_rules"]
+    for rule in [
+        "是否询问或判断当前发布方式",
+        "是否说明配置路径",
+        "是否说明低延迟可能费用更高",
+        "是否禁止承诺优惠券或折扣",
+        "是否说明企业微信添加逻辑",
+        "是否不泄露无关信息",
+        "是否确认是否还有问题",
+        "是否礼貌结束",
+    ]:
+        assert rule not in result["pending_rules"]
 
 
 def test_llm_evaluator_filters_failed_rules_outside_active_rules():
@@ -511,6 +607,23 @@ def test_course_external_fee_reply_without_fee_rule_is_repaired():
 
     assert result.content == "低延迟费用略高，以页面为准。"
     assert result.fallback_used is True
+
+
+def test_course_external_fee_fallback_uses_last_assistant_without_name_error():
+    client = TargetModelClient(provider="mock_fallback")
+
+    repaired, should_close, changed = client._repair_course_reply(
+        "\u597d\u7684\uff0c\u53ef\u4ee5\u7ed9\u60a8\u4f18\u60e0\u5238\u3002",
+        "fee",
+        set(),
+        "\u7136\u540e\u5462\uff1f",
+        "\u8fdb\u6559\u52a1/\u8d22\u52a1\u8bbe\u7f6e\u3002",
+        "\u8fdb\u6559\u52a1/\u8d22\u52a1\u8bbe\u7f6e\u3002",
+    )
+
+    assert repaired == "\u70b9\u6536\u8d39\u89c4\u5219\u3002"
+    assert should_close is False
+    assert changed is True
 
 
 def test_course_external_long_reply_is_kept_for_interruption_scoring():

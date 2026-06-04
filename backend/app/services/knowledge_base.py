@@ -11,7 +11,7 @@ RIDER_RULES = [
     ("退出飞毛腿流程", ["退出", "取消", "报名", "不参加", "不想参加", "哪里取消", "在哪取消", "在哪里取消"], "faq"),
     ("恶劣天气与安全", ["下雨", "雨天", "天气", "危险", "安全"], "faq"),
     ("报名排名规则", ["排名", "名额", "报不上", "排不上", "站长", "拒单", "取消", "超时", "资格", "保住"], "flow"),
-    ("合同完成要求", ["单日", "多日", "X单", "X 单", "Y单", "Y 单", "没完成", "影响", "合同", "派单"], "faq"),
+    ("合同完成要求", ["单日", "多日", "X单", "X 单", "Y单", "Y 单", "没完成", "影响", "合同", "派单", "单量", "几单", "多少单", "怎么算", "要求"], "faq"),
     ("连续完成激励", ["奖励", "补贴", "激励", "连续", "W 天", "W天"], "faq"),
     ("不想配送挽留", ["不想干", "不干", "不想跑", "不想配送", "不跑", "跑不了", "无法配送", "不一定"], "flow"),
     ("愿意配送鼓励", ["能跑", "可以跑", "开始配送", "今天能跑", "上线"], "flow"),
@@ -161,6 +161,8 @@ def retrieve_knowledge(task: Any, user_message: str, top_k: int = 3) -> List[Kno
     task_type = _task_type(task)
     scored: List[tuple[int, int, KnowledgeChunk]] = []
     for index, chunk in enumerate(chunks):
+        if chunk.get("chunk_type") == "opening":
+            continue
         score = _keyword_score(task_type, query, chunk)
         score += _text_overlap_score(query, chunk)
         if score > 0:
@@ -334,3 +336,20 @@ def _line_title(content: str, fallback: str) -> str:
             if 2 <= len(title) <= 24:
                 return title
     return text[:20].strip(" #") or fallback
+
+
+def filter_relevant_knowledge(knowledge: List[KnowledgeChunk], assistant_message: str, min_matches: int = 1) -> List[KnowledgeChunk]:
+    """Only keep knowledge chunks whose keywords appear in the model's actual reply."""
+    if not assistant_message:
+        return []
+    reply = _normalize_text(assistant_message)
+    result: List[KnowledgeChunk] = []
+    for chunk in knowledge:
+        content = str(chunk.get("content", ""))
+        title = str(chunk.get("title", ""))
+        searchable = _normalize_text(f"{title} {content}")
+        tokens = [t for t in _query_tokens(searchable) if len(t) >= 2]
+        matches = sum(1 for t in tokens if t in reply)
+        if matches >= min_matches:
+            result.append(dict(chunk))
+    return result

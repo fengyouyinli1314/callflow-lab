@@ -3,7 +3,7 @@
     <div class="page-header">
       <div>
         <h1>开始评测</h1>
-        <p>选择任务、用例和模型 provider 后，点击开始评测执行多轮对话、规则评分与报告生成。</p>
+        <p>选择任务、用例和被测模型接入方式后，点击开始评测执行多轮对话、规则评分与报告生成。</p>
       </div>
     </div>
 
@@ -25,7 +25,7 @@
             <el-button :icon="Plus" @click="openCreateCase">新建用例</el-button>
             <el-button :icon="Edit" :disabled="!selectedCase" @click="openEditCase">编辑当前用例</el-button>
           </div>
-          <el-form-item label="被测模型 provider">
+          <el-form-item label="被测模型接入方式">
             <el-select v-model="modelProvider" style="width: 100%">
               <el-option
                 v-for="provider in providerOptions"
@@ -36,12 +36,12 @@
             </el-select>
           </el-form-item>
           <p class="provider-note">
-            mock_fallback 仅用于演示兜底，不是真实 AI；openai_compatible 和 custom_endpoint 才是真实模型接入方式。
+            本地兜底模型仅用于演示；真实大模型接口和自定义模型接口用于接入被测模型。
           </p>
           <div class="debug-meta">
-            <span>task_type: {{ selectedTask?.task_type || 'unknown' }}</span>
-            <span>model_provider: {{ displayProvider(result?.provider_used || result?.model_provider || modelProvider) }}</span>
-            <span>model_name: {{ displayProvider(result?.model_name || modelName) }}</span>
+            <span>任务类型：{{ taskTypeLabel(selectedTask?.task_type) }}</span>
+            <span>接入方式：{{ displayProvider(result?.provider_used || result?.model_provider || modelProvider) }}</span>
+            <span>模型名称：{{ result?.model_name || modelName }}</span>
           </div>
           <el-button
             type="primary"
@@ -58,48 +58,6 @@
             <span>{{ currentRunStage }}</span>
           </div>
         </el-form>
-
-        <template v-if="selectedCase">
-          <el-divider />
-          <div class="case-summary">
-            <div class="summary-row">
-              <span>难度</span>
-              <el-tag>{{ selectedCase.difficulty }}</el-tag>
-            </div>
-            <div class="summary-row">
-              <span>用例模式</span>
-              <el-tag type="info">{{ caseModeLabel(selectedCase.case_mode) }}</el-tag>
-            </div>
-            <div class="summary-row">
-              <span>安全上限</span>
-              <strong>{{ selectedCase.max_turns }} 轮</strong>
-            </div>
-            <div>
-              <label>当前目标</label>
-              <p>{{ currentGoalText }}</p>
-            </div>
-            <div>
-              <label>用户画像</label>
-              <p>{{ selectedCase.user_profile }}</p>
-            </div>
-            <div>
-              <label>用户首句回应</label>
-              <p>{{ selectedCase.initial_message }}</p>
-            </div>
-            <div>
-              <label>必须满足规则</label>
-              <div class="tag-list">
-                <el-tag v-for="rule in selectedCase.required_rules || []" :key="rule" type="success">{{ rule }}</el-tag>
-              </div>
-            </div>
-            <div>
-              <label>禁止触发规则</label>
-              <div class="tag-list">
-                <el-tag v-for="rule in selectedCase.forbidden_rules || []" :key="rule" type="danger">{{ rule }}</el-tag>
-              </div>
-            </div>
-          </div>
-        </template>
       </div>
 
       <div class="panel conversation-panel">
@@ -111,11 +69,10 @@
             <el-tag v-if="result">Run #{{ result.run_id }}</el-tag>
           </div>
         </div>
-        <div v-if="selectedCase" class="conversation-target">当前目标：{{ currentGoalText }}</div>
         <div class="conversation-scroll">
           <div v-if="workflowVisible" class="workflow-card">
             <div class="workflow-head">
-              <span>Agent 工作流</span>
+              <span>评测工作流</span>
               <strong>{{ currentRunStage }}</strong>
             </div>
             <div class="workflow-steps">
@@ -142,7 +99,7 @@
             <div class="progress-copy">
               <span>评测执行中</span>
               <strong>{{ currentRunStage }}</strong>
-              <p>系统正在编排用户模拟器、被测模型、规则评分和 Judge Agent。</p>
+              <p>系统正在编排用户模拟器、被测模型、规则评分和语义评审。</p>
             </div>
           </div>
 
@@ -156,39 +113,6 @@
           </div>
 
           <template v-if="messages.length">
-            <div v-if="selectedCase" class="start-card">
-              <div class="start-card-head">
-                <div>
-                  <span>评测起点</span>
-                  <strong>{{ selectedCase.name }}</strong>
-                </div>
-                <div class="start-card-tags">
-                  <el-tag type="info">{{ caseModeLabel(selectedCase.case_mode) }}</el-tag>
-                  <el-tag type="info">安全上限 {{ selectedCase.max_turns }} 轮</el-tag>
-                </div>
-              </div>
-              <div class="start-grid">
-                <div>
-                  <label>用户画像</label>
-                  <p>{{ selectedCase.user_profile || '暂无用户画像' }}</p>
-                </div>
-                <div>
-                  <label>用户首句回应</label>
-                  <p>{{ selectedCase.initial_message || '暂无用户回应' }}</p>
-                </div>
-                <div>
-                  <label>测试目标</label>
-                  <p>{{ currentGoalText }}</p>
-                </div>
-                <div>
-                  <label>当前激活规则摘要</label>
-                  <div v-if="activeRuleSummary.length" class="tag-list compact-tags">
-                    <el-tag v-for="rule in activeRuleSummary" :key="rule" type="info">{{ rule }}</el-tag>
-                  </div>
-                  <p v-else>开始评测后展示本轮激活规则。</p>
-                </div>
-              </div>
-            </div>
             <ConversationTimeline :messages="messages" />
           </template>
 
@@ -211,8 +135,8 @@
             </div>
           </div>
           <div v-if="streamJudgeResult && !report" class="judge-preview">
-            <span>Judge Agent 初评</span>
-            <p>{{ streamJudgeResult.reason || 'Judge Agent 已返回阶段性评估。' }}</p>
+            <span>语义评审初评</span>
+            <p>{{ streamJudgeResult.reason || '语义评审已返回阶段性评估。' }}</p>
           </div>
           <ScoreRadar v-if="report" :report="report" />
           <div class="rule-summary">
@@ -275,6 +199,7 @@ import request from '../api/request'
 import CaseEditor from '../components/CaseEditor.vue'
 import ConversationTimeline from '../components/ConversationTimeline.vue'
 import ScoreRadar from '../components/ScoreRadar.vue'
+import { PROVIDER_OPTIONS, normalizeProvider, providerDisplayName } from '../utils/providerLabels'
 
 const tasks = ref([])
 const cases = ref([])
@@ -293,19 +218,15 @@ const streamMode = ref('')
 const modelProvider = ref('mock_fallback')
 const caseEditorVisible = ref(false)
 const editingCase = ref(null)
-const providerOptions = [
-  { label: 'mock_fallback（本地兜底，非真实 AI）', value: 'mock_fallback' },
-  { label: 'openai_compatible（真实大模型 API）', value: 'openai_compatible' },
-  { label: 'custom_endpoint（自定义被测模型接口）', value: 'custom_endpoint' }
-]
+const providerOptions = PROVIDER_OPTIONS
 const workflowSteps = [
-  { key: 'scenario', label: 'Scenario Agent', description: '解析当前任务和用例', message: '正在初始化评测任务...' },
-  { key: 'knowledge', label: 'Knowledge Retriever', description: '召回相关知识点', message: '正在召回知识库...' },
-  { key: 'user', label: 'User Simulator Agent', description: '生成用户发言', message: '用户模拟器 Agent 正在生成用户发言...' },
-  { key: 'target', label: 'Target Model', description: '生成被测回复', message: '正在调用被测模型...' },
-  { key: 'rules', label: 'Rule Judge', description: '执行硬规则检查', message: '正在进行规则评分...' },
-  { key: 'judge', label: 'LLM Judge Agent', description: '生成语义评分', message: 'Judge Agent 正在生成评估意见...' },
-  { key: 'report', label: 'Report Agent', description: '生成报告', message: '报告生成中...' }
+  { key: 'scenario', label: '任务解析', description: '解析当前任务和用例', message: '正在初始化评测任务...' },
+  { key: 'knowledge', label: '知识召回', description: '召回相关知识点', message: '正在召回知识库...' },
+  { key: 'user', label: '用户模拟器', description: '生成用户发言', message: '用户模拟器正在生成用户发言...' },
+  { key: 'target', label: '被测模型', description: '生成被测回复', message: '正在调用被测模型...' },
+  { key: 'rules', label: '规则评分', description: '执行硬规则检查', message: '正在进行规则评分...' },
+  { key: 'judge', label: '语义评审', description: '生成语义评分', message: '正在生成评估意见...' },
+  { key: 'report', label: '报告生成', description: '生成报告', message: '报告生成中...' }
 ]
 const progressStages = workflowSteps.map((item) => item.message)
 let progressTimer = null
@@ -318,19 +239,18 @@ const caseModeLabels = {
   abnormal_exit: '异常终止用例'
 }
 const caseModeLabel = (mode) => caseModeLabels[mode] || caseModeLabels.branch
-const currentGoalText = computed(() => {
-  const goals = selectedCase.value?.expected_goals || []
-  return goals.length ? goals.join(' / ') : '暂无目标'
-})
-const legacyProviderMap = {
-  mock_baseline: 'mock_fallback',
-  mock_strong: 'mock_fallback'
+const displayProvider = (provider) => providerDisplayName(provider)
+const modelName = computed(() => providerDisplayName(modelProvider.value))
+const taskTypeLabel = (type) => {
+  const labels = {
+    rider_outbound: '飞毛腿骑手外呼',
+    course_platform_outbound: '课程直播外呼',
+    generic_outbound: '通用外呼'
+  }
+  return labels[type] || '未知任务类型'
 }
-const normalizeProvider = (provider) => legacyProviderMap[provider] || provider || 'mock_fallback'
-const displayProvider = (provider) => normalizeProvider(provider)
-const modelName = computed(() => normalizeProvider(modelProvider.value))
 const currentRunStage = computed(() => currentStageMessage.value || progressStages[currentStageIndex.value] || progressStages[0])
-const workflowVisible = computed(() => running.value || streamDone.value || messages.value.length > 0 || Boolean(report.value))
+const workflowVisible = computed(() => running.value && !evaluationError.value)
 const progressPercent = computed(() =>
   Math.max(12, Math.round(((currentStageIndex.value + 1) / progressStages.length) * 100))
 )
@@ -377,21 +297,6 @@ const failedRules = computed(() => {
 const pendingRules = computed(() => {
   const active = report.value?.active_rules || report.value?.activeRules || {}
   return report.value?.pending_rules || report.value?.pendingRules || active.pending_rules || active.pendingRules || []
-})
-const activeRuleSummary = computed(() => {
-  const detail = messages.value[0]?.detail || {}
-  const active = detail.active_rules || detail.activeRules || report.value?.active_rules || report.value?.activeRules || {}
-  const rules = [
-    ...(active.global_rules || active.globalRules || []),
-    ...(active.case_rules || active.caseRules || []),
-    ...(active.stage_rules || active.stageRules || []),
-    ...(active.triggered_rules || active.triggeredRules || [])
-  ]
-  if (rules.length) return Array.from(new Set(rules)).slice(0, 6)
-  return visibleRules([
-    ...(selectedCase.value?.required_rules || []),
-    ...(selectedCase.value?.forbidden_rules || [])
-  ], 4)
 })
 const isExcelOutboundTask = (task) =>
   task.data_source === 'excel_desensitized' ||
@@ -448,7 +353,7 @@ const setStageByMessage = (message = '') => {
   else if (text.includes('用户模拟器') || text.includes('用户')) currentStageIndex.value = 2
   else if (text.includes('模型')) currentStageIndex.value = 3
   else if (text.includes('规则')) currentStageIndex.value = 4
-  else if (text.includes('Judge') || text.includes('评估')) currentStageIndex.value = 5
+  else if (text.includes('Judge') || text.includes('评审') || text.includes('评估')) currentStageIndex.value = 5
   else if (text.includes('报告')) currentStageIndex.value = 6
 }
 
@@ -506,7 +411,7 @@ const handleCaseSaved = async (savedCase) => {
 const start = async () => {
   if (running.value) return
   if (!taskId.value || !caseId.value || !modelProvider.value) {
-    ElMessage.warning('请选择任务、用例和模型 provider')
+    ElMessage.warning('请选择任务、用例和被测模型接入方式')
     return
   }
   running.value = true
@@ -705,7 +610,7 @@ const handleStreamEvent = async (event) => {
   }
   if (event.event === 'judge_result') {
     currentStageIndex.value = 5
-    currentStageMessage.value = 'LLM Judge 正在生成评分解释...'
+    currentStageMessage.value = '语义评审正在生成评分解释...'
     streamJudgeResult.value = {
       score: Number(event.score || 0),
       reason: event.reason || ''
@@ -793,18 +698,6 @@ onMounted(async () => {
   top: 22px;
 }
 
-.case-summary {
-  display: grid;
-  gap: 14px;
-}
-
-.summary-row {
-  display: flex;
-  justify-content: space-between;
-  gap: 12px;
-  align-items: center;
-}
-
 .debug-meta {
   display: grid;
   gap: 3px;
@@ -847,13 +740,6 @@ onMounted(async () => {
   justify-content: flex-end;
 }
 
-.conversation-target {
-  color: var(--muted);
-  font-size: 13px;
-  line-height: 1.5;
-  margin: -4px 0 12px;
-}
-
 .case-actions {
   display: grid;
   grid-template-columns: 1fr 1fr;
@@ -861,7 +747,6 @@ onMounted(async () => {
   margin: -4px 0 16px;
 }
 
-.case-summary label,
 .rule-summary label,
 .failure-summary label,
 .pending-summary label {
@@ -869,11 +754,6 @@ onMounted(async () => {
   color: var(--muted);
   font-size: 12px;
   margin-bottom: 6px;
-}
-
-.case-summary p {
-  margin: 0;
-  color: var(--body-text);
 }
 
 .conversation-panel {
@@ -1185,55 +1065,6 @@ onMounted(async () => {
   height: 20px;
 }
 
-.start-card {
-  display: grid;
-  gap: 14px;
-  padding: 14px;
-  margin-bottom: 18px;
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  background: rgba(15, 23, 42, 0.42);
-}
-
-.start-card-head {
-  display: flex;
-  justify-content: space-between;
-  gap: 12px;
-  align-items: flex-start;
-}
-
-.start-card-head span,
-.start-grid label {
-  display: block;
-  color: var(--muted);
-  font-size: 12px;
-  margin-bottom: 4px;
-}
-
-.start-card-head strong {
-  color: var(--body-text);
-  font-size: 16px;
-}
-
-.start-card-tags,
-.compact-tags {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-}
-
-.start-grid {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 12px;
-}
-
-.start-grid p {
-  margin: 0;
-  color: var(--body-text);
-  line-height: 1.6;
-}
-
 .score-head {
   display: flex;
   align-items: flex-end;
@@ -1304,10 +1135,6 @@ onMounted(async () => {
 
   .conversation-scroll {
     max-height: none;
-  }
-
-  .start-grid {
-    grid-template-columns: 1fr;
   }
 
   .workflow-steps {

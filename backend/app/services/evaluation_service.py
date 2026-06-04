@@ -35,6 +35,7 @@ from app.services.rider_flow import (
     rider_rank_qualification_done,
 )
 from app.services.target_model_client import TargetModelClient, TargetModelError, normalize_target_provider
+from app.services.knowledge_base import filter_relevant_knowledge
 from app.services.user_simulator import UserSimulator
 
 
@@ -618,7 +619,7 @@ class EvaluationService:
                         "target_call_chain": target_result.call_chain,
                         "target_should_close": target_result.should_close,
                         "dialogue_state": target_result.dialogue_state,
-                        "retrieved_knowledge": target_result.retrieved_knowledge,
+                        "retrieved_knowledge": filter_relevant_knowledge(target_result.retrieved_knowledge or [], assistant_message),
                         "case_mode": case_payload.get("case_mode", "branch"),
                         "expected_steps": case_payload.get("expected_steps", []),
                         "planned_max_turns": planned_max_turns,
@@ -640,7 +641,7 @@ class EvaluationService:
                         "untriggered_rules": turn_score.get("untriggered_rules", []),
                         "not_applicable_rules": turn_score.get("not_applicable_rules", []),
                         "rule_lifecycle": turn_score.get("rule_lifecycle", {}),
-                        "retrieved_knowledge": target_result.retrieved_knowledge,
+                        "retrieved_knowledge": filter_relevant_knowledge(target_result.retrieved_knowledge or [], assistant_message),
                         "deduction_reason": turn_score.get("deduction_reason", ""),
                         "current_stage": turn_score.get("current_stage", ""),
                         "memory_state": memory_state,

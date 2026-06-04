@@ -363,7 +363,14 @@ class TargetModelClient:
             return reply, self._provider_fallback(provider), should_close
         external = self._provider_reply(task_payload, case_payload, messages, provider, retrieved_knowledge, memory_state)
         if external:
-            repaired, should_close, changed = self._repair_course_reply(external, stage, said, last_user, assistant_text)
+            repaired, should_close, changed = self._repair_course_reply(
+                external,
+                stage,
+                said,
+                last_user,
+                assistant_text,
+                last_assistant,
+            )
             return repaired, changed, should_close
 
         fallback_used = self._provider_fallback(provider)
@@ -416,12 +423,12 @@ class TargetModelClient:
                 reply = "发布页以后分标准和低延迟两个选项。"
         elif stage == "live_difference":
             reply = self._course_live_difference_reply(assistant_text)
-        elif self._has_any(last_user, ["到了", "下一步", "继续", "收到", "可以", "哪里", "选", "配置"]) and self._has_any(last_assistant, ["选择【直播平台】"]):
-            reply = "勾选低延迟并保存。"
-        elif self._has_any(last_user, ["到了", "下一步", "继续", "收到", "可以", "哪里", "选", "配置"]) and self._has_any(last_assistant, ["点直播平台管理"]):
+        elif self._has_any(last_user, ["到了", "然后", "入口", "下一步", "继续", "收到", "可以", "哪里", "选", "配置"]) and self._has_any(last_assistant, ["选择【直播平台】"]):
+            reply = "在服务产品下勾选低延迟并保存。"
+        elif self._has_any(last_user, ["到了", "然后", "入口", "下一步", "继续", "收到", "可以", "哪里", "选", "配置"]) and self._has_any(last_assistant, ["点服务商/直播平台管理"]):
             reply = "选择【直播平台】。"
-        elif self._has_any(last_user, ["到了", "下一步", "继续", "收到", "可以", "哪里", "选", "配置"]) and self._has_any(last_assistant, ["进【我的】", "进入【我的】"]):
-            reply = "点直播平台管理。"
+        elif self._has_any(last_user, ["到了", "然后", "入口", "下一步", "继续", "收到", "可以", "哪里", "选", "配置"]) and self._has_any(last_assistant, ["进【我的】", "进入【我的】"]):
+            reply = "点服务商/直播平台管理。"
         elif stage == "busy":
             if not self._has_any(assistant_text, ["1分钟", "1 分钟", "保证简短"]):
                 reply = "就1分钟，保证简短。"
@@ -440,7 +447,7 @@ class TargetModelClient:
             elif self._has_any(last_user, ["流程", "会变"]):
                 reply = "其他发课流程不变。"
             elif "已询问发布方式" not in said:
-                reply = "Web还是第三方发布？"
+                reply = "你是通过Web还是第三方发布？"
             elif self._has_any(last_user, ["SaaS", "校务", "第三方", "看不到"]):
                 reply = "进【我的】。"
             else:
@@ -451,7 +458,7 @@ class TargetModelClient:
             if is_web and is_visible:
                 reply = "直接使用即可。"
             elif is_web:
-                reply = "后台配置，请明天查看。"
+                reply = "后台为其配置，请明天再查看。"
             elif is_visible:
                 reply = "按需选择即可。"
             else:
@@ -488,6 +495,12 @@ class TargetModelClient:
                 reply = "低延迟费用略高。"
             elif self._has_any(last_user, ["不会配置", "无法配置"]):
                 reply = "进教务/财务设置。"
+            elif self._has_any(last_user, ["教务", "财务设置", "然后", "下一步", "继续"]) and self._has_any(last_assistant, ["教务/财务设置"]):
+                reply = "点收费规则。"
+            elif self._has_any(last_user, ["然后", "下一步", "继续", "收费"]) and self._has_any(last_assistant, ["收费规则"]):
+                reply = "编辑线路附加费，勾选低延迟直播。"
+            elif self._has_any(last_user, ["然后", "下一步", "继续", "附加费"]) and self._has_any(last_assistant, ["附加费"]):
+                reply = "保存。"
             elif self._has_any(last_user, ["已设置"]):
                 reply = "低延迟也要适用该费用。"
             elif self._has_any(last_user, ["没设置", "未设置"]):
@@ -500,21 +513,28 @@ class TargetModelClient:
             reply = "优惠券不能承诺。"
         elif stage == "enterprise_wechat":
             if self._has_any(last_user, ["加不了", "不能加", "不可添加"]):
-                reply = "请提供可添加手机号。"
+                reply = "请提供可添加的手机号。"
+            elif self._has_any(last_assistant, ["请提供可添加手机号"]):
+                reply = "企业微信加您，请通过验证。"
+            elif self._has_any(last_user, ["能加", "可添加", "可以加"]):
+                reply = "企业微信加您，请通过验证。"
+            elif self._has_any(last_assistant, ["当前号码能加吗"]):
+                reply = "企业微信加您，请通过验证。"
             else:
-                reply = "企业微信加您，请验证。"
+                reply = "当前号码能加吗？"
         elif self._has_any(last_user, ["可以", "继续", "下一步", "收到"]) and self._has_any(
             assistant_text,
             ["企业微信", "通过验证", "请提供可添加手机号"],
         ):
-            reply = "祝课程顺利，招生满满。"
-            should_close = True
+            reply = "还有其他问题吗？"
         elif stage == "accepted":
             if "已询问知情" not in said:
                 reply = "后台已走低延迟，您知道吗？"
-            else:
+            elif self._has_any(last_user, ["没问题", "先这样", "可以了", "没有"]):
                 reply = "祝课程顺利，招生满满。"
                 should_close = True
+            else:
+                reply = "还有其他问题吗？"
         else:
             if self._has_any(last_user, ["升级", "变", "页面"]):
                 reply = "发布页新增了独立的低延迟直播选项。"
@@ -529,9 +549,11 @@ class TargetModelClient:
             elif "已说明标准直播/低延迟直播区别" not in said:
                 reply = self._course_live_difference_reply(assistant_text)
             elif "已询问发布方式" not in said:
-                reply = "Web还是第三方发布？"
+                reply = "你是通过Web还是第三方发布？"
             elif "已询问前端是否可见" not in said:
                 reply = "低延迟已显示吗？"
+            elif self._has_any(last_user, ["到了", "然后", "入口", "下一步", "继续", "收到", "可以"]) and self._has_any(assistant_text, ["进【我的】"]):
+                reply = "点服务商/直播平台管理。"
             elif "已询问学员端费用" not in said and self._has_any(assistant_text, ["直接使用", "按需选择", "明天查看", "保存", "勾选低延迟"]):
                 reply = "学员端有附加费吗？"
             elif "已询问企业微信号码" not in said and self._has_any(assistant_text, ["适用该费用", "那进入下一步", "教务/财务设置"]):
@@ -634,11 +656,11 @@ class TargetModelClient:
             return "先确认发布入口。"
         if self._has_any(text, ["第三方系统看不到", "看不到是哪一步", "一步一步", "不知道点哪里"]):
             if self._has_any(last_assistant, ["选择【直播平台】"]):
-                return "勾选低延迟并保存。"
-            if self._has_any(last_assistant, ["点直播平台管理"]):
+                return "在服务产品下勾选低延迟并保存。"
+            if self._has_any(last_assistant, ["点服务商/直播平台管理"]):
                 return "选择【直播平台】。"
             if self._has_any(last_assistant, ["进【我的】", "进入【我的】"]):
-                return "点直播平台管理。"
+                return "点服务商/直播平台管理。"
             return "先进入【我的】。"
         if self._has_any(text, ["企业微信", "手机号加不了", "不想加企微"]):
             return "请给可添加手机号。"
@@ -664,6 +686,7 @@ class TargetModelClient:
         said: set[str],
         last_user: str,
         assistant_text: str,
+        last_assistant: str,
     ) -> Tuple[str, bool, bool]:
         text = self._normalize_reply_text(reply, "course_platform_outbound").strip()
         should_close = False
@@ -694,7 +717,7 @@ class TargetModelClient:
             return "那我稍后再打。", True, True
         if not hard_invalid:
             return text, False, False
-        repaired, repaired_close = self._course_stage_fallback(stage, said, last_user, assistant_text)
+        repaired, repaired_close = self._course_stage_fallback(stage, said, last_user, assistant_text, last_assistant)
         return repaired, repaired_close, True
 
     def _course_stage_fallback(
@@ -703,6 +726,7 @@ class TargetModelClient:
         said: set[str],
         last_user: str,
         assistant_text: str,
+        last_assistant: str,
     ) -> Tuple[str, bool]:
         if stage in {"owner", "upgrade_intro"}:
             if stage == "owner" and "已询问知情" not in said and not self._has_any(assistant_text, ["后台已走低延迟", "保障质量", "您知道吗"]):
@@ -746,13 +770,13 @@ class TargetModelClient:
             return "低延迟已显示吗？", False
         if stage in {"config_path", "third_party_path"}:
             if "已询问发布方式" not in said:
-                return "Web还是第三方发布？", False
+                return "你是通过Web还是第三方发布？", False
             if self._has_any(assistant_text, ["选择【直播平台】"]):
-                return "勾选低延迟并保存。", False
-            if self._has_any(assistant_text, ["点直播平台管理"]):
+                return "在服务产品下勾选低延迟并保存。", False
+            if self._has_any(assistant_text, ["点服务商/直播平台管理"]):
                 return "选择【直播平台】。", False
             if self._has_any(assistant_text, ["进【我的】", "进入【我的】"]):
-                return "点直播平台管理。", False
+                return "点服务商/直播平台管理。", False
             return "进【我的】。", False
         if stage == "web_path":
             return "Web可直接选择。", False
@@ -763,22 +787,40 @@ class TargetModelClient:
         if stage == "fee":
             if self._has_any(last_user, ["费用会不会更高", "价格", "贵", "费用高"]):
                 return "低延迟费用略高，以页面为准。", False
+            if self._has_any(last_user, ["不会配置", "无法配置"]):
+                return "进教务/财务设置。", False
+            if self._has_any(last_user, ["教务", "财务设置", "然后", "下一步", "继续"]) and self._has_any(last_assistant, ["教务/财务设置"]):
+                return "点收费规则。", False
+            if self._has_any(last_user, ["然后", "下一步", "继续", "收费"]) and self._has_any(last_assistant, ["收费规则"]):
+                return "编辑线路附加费，勾选低延迟直播。", False
+            if self._has_any(last_user, ["然后", "下一步", "继续", "附加费"]) and self._has_any(last_assistant, ["附加费"]):
+                return "保存。", False
+            if self._has_any(last_user, ["已设置"]):
+                return "低延迟也要适用该费用。", False
+            if self._has_any(last_user, ["没设置", "未设置"]):
+                return "那进入下一步。", False
             return "学员端有附加费吗？", False
         if stage == "coupon":
             return "优惠券不能承诺。", False
         if stage == "enterprise_wechat":
-            return "企业微信加您，请验证。", False
+            if self._has_any(last_user, ["加不了", "不能加", "不可添加"]):
+                return "请提供可添加的手机号。", False
+            if self._has_any(last_assistant, ["请提供可添加手机号"]):
+                return "企业微信加您，请通过验证。", False
+            return "企业微信加您，请通过验证。", False
         if stage == "accepted":
             if "已询问知情" not in said:
                 return "后台已走低延迟，您知道吗？", False
-            return "祝课程顺利，招生满满。", True
+            if self._has_any(last_user, ["没问题", "先这样", "可以了"]):
+                return "祝课程顺利，招生满满。", True
+            return "还有其他问题吗？", False
         if self._has_any(last_user, ["升级", "变", "页面"]):
             return "发布页新增了独立的低延迟直播选项。", False
         if "已说明发布页升级" not in said:
             return "我们直播产品升级了。", False
         if not self._has_any(assistant_text, ["低延迟选项", "低延迟直播选项", "新增低延迟", "独立的低延迟"]):
             return "发布页新增了独立的低延迟直播选项。", False
-        return "Web还是第三方发布？", False
+        return "你是通过Web还是第三方发布？", False
 
     def _repair_course_difference_reply(self, text: str, assistant_text: str) -> str:
         if self._course_difference_reply_has_required_fact(text):
@@ -1175,11 +1217,11 @@ class TargetModelClient:
                     "适合小班和实操课。",
                 ],
                 "config_path": [
-                    "Web还是第三方发布？",
+                    "你是通过Web还是第三方发布？",
                     "发课时选低延迟直播。",
                     "低延迟已显示吗？",
                     "进【我的】。",
-                    "点直播平台管理。",
+                    "点服务商/直播平台管理。",
                 ],
                 "visibility_check": [
                     "低延迟已显示吗？",
@@ -1192,8 +1234,8 @@ class TargetModelClient:
                 ],
                 "third_party_path": [
                     "进【我的】。",
-                    "点直播平台管理。",
-                    "勾选低延迟并保存。",
+                    "点服务商/直播平台管理。",
+                    "在服务产品下勾选低延迟并保存。",
                 ],
                 "fee": [
                     "低延迟费用略高。",
@@ -1215,7 +1257,7 @@ class TargetModelClient:
                     "那我稍后再打。",
                 ],
                 "enterprise_wechat": [
-                    "企业微信加您，请验证。",
+                    "企业微信加您，请通过验证。",
                     "当前号码能加吗？",
                 ],
                 "accepted": [
@@ -1225,7 +1267,7 @@ class TargetModelClient:
             return by_stage.get(
                 stage,
                 [
-                    "Web还是第三方发布？",
+                    "你是通过Web还是第三方发布？",
                     "低延迟已显示吗？",
                     "进【我的】。",
                     "学员端有附加费吗？",
@@ -1588,7 +1630,17 @@ class TargetModelClient:
         said = set(dialogue_state.get("assistant_said_topics") or [])
         last_user = str(messages[-1].get("user_message", "") or "") if messages else ""
         assistant_text = "\n".join(str(item.get("assistant_message", "") or "") for item in messages)
-        expected_reply, should_close = self._course_stage_fallback(stage, said, last_user, assistant_text)
+        last_assistant = next(
+            (str(item.get("assistant_message", "") or "") for item in reversed(messages) if item.get("assistant_message")),
+            "",
+        )
+        expected_reply, should_close = self._course_stage_fallback(
+            stage,
+            said,
+            last_user,
+            assistant_text,
+            last_assistant,
+        )
         notes = {
             "owner": "负责人确认后先说明直播产品升级和新增低延迟直播选项，不要跳到配置路径。",
             "upgrade_intro": "先回答升级内容：发布页以后分标准和低延迟两个选项。",
@@ -1597,7 +1649,7 @@ class TargetModelClient:
             "fee": "说明低延迟费用略高，以页面为准；不能承诺优惠券或折扣。",
             "coupon": "明确不能承诺优惠券或折扣，再回到费用/页面规则。",
             "config_path": "先确认 Web 控制台还是第三方系统，再分步给路径。",
-            "third_party_path": "第三方路径要一步一答：进【我的】、直播平台管理、选择【直播平台】、勾选低延迟并保存。",
+            "third_party_path": "第三方路径要一步一答：进【我的】、直播平台管理、选择【直播平台】、在服务产品下勾选低延迟并保存。",
             "web_path": "Web 控制台可在直播发布页直接选择低延迟。",
             "visibility_check": "如果没看到低延迟，继续引导配置路径或明天查看，不要泛泛说后台处理。",
             "enterprise_wechat": "只说明企业微信添加或号码验证，不索要敏感 API Key。",
@@ -1837,8 +1889,8 @@ class TargetModelClient:
                     break
             candidate = "".join(collected).strip()
             if candidate and "站长" in candidate and self._has_any(candidate, ["请问是", "是您", "是你", "吗"]):
-                return self._trim(candidate.replace("我是站长", "我是美团外卖骑手的站长"), 70)
-        return f"你好，请问是{rider_name}吗？我是美团外卖骑手的站长。"
+                return self._trim(candidate, 70)
+        return f"你好，请问是{rider_name}吗？我是站长。"
 
     def _replace_rider_placeholders(self, text: str, case_payload: Dict[str, Any]) -> str:
         rider_name = self._rider_name_for_case(case_payload)

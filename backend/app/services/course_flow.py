@@ -85,8 +85,6 @@ def course_full_flow_step_done(step: str, user_text: str, assistant_text: str, s
                 "Web 可直接",
                 "Web可直接",
                 "Web 控制台可直接",
-                "进【我的】",
-                "直播平台管理",
                 "勾选低延迟",
                 "保存",
                 "明天再查看",

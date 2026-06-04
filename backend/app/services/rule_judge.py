@@ -119,11 +119,10 @@ class RuleJudge:
     ) -> Dict[str, Any]:
         result = self._evaluate_rules(task_payload or {}, case_payload, history)
         result = self._apply_turn_rule_lifecycle(task_payload or {}, case_payload, history, result)
-        pending_count = len(result.get("pending_rules", []))
-        active_required = max(len(result.get("required_rules", [])) - pending_count, 1)
+        required_count = max(len(result.get("required_rules", [])), 1)
         hidden_violated = result.get("hidden_guardrail_rules", {}).get("violated", [])
         score = (
-            100 * len(result["matched_rules"]) / active_required
+            100 * len(result["matched_rules"]) / required_count
             - len(result["violated_rules"]) * 22
             - len(hidden_violated) * 18
         )
@@ -163,6 +162,14 @@ class RuleJudge:
     ) -> Dict[str, Any]:
         rule_result = self._evaluate_rules(task_payload, case_payload, messages)
         rule_result = self._apply_full_flow_expected_steps(task_payload, case_payload, messages, rule_result)
+        rule_result = self._resolve_completed_pending_rules(task_payload, case_payload, messages, rule_result)
+        # Remove driving/busy rules from missed if never triggered in this conversation
+        task_type = self._task_type(task_payload, case_payload)
+        context_text = self._assistant_text(messages) + "\n" + "\n".join(item.get("user_message", "") for item in messages)
+        if task_type == "course_platform_outbound" and not self._has_any(context_text, ["开车", "在开车"]):
+            rule_result["missed_rules"] = [r for r in rule_result["missed_rules"] if "稍后再打" not in r and "立即结束通话" not in r and "不继续推销" not in r]
+        if task_type == "course_platform_outbound" and not self._has_any(context_text, ["很忙", "没时间"]):
+            rule_result["missed_rules"] = [r for r in rule_result["missed_rules"] if "就1分钟" not in r and "继续简短" not in r]
         late_satisfied_rules = self._late_satisfied_rules(task_payload, case_payload, messages, rule_result)
         if late_satisfied_rules:
             rule_result["late_satisfied_rules"] = late_satisfied_rules
@@ -188,11 +195,13 @@ class RuleJudge:
         repetition_penalty = self._repetition_penalty(messages)
         unanswered_penalty = self._unanswered_penalty(messages)
         brevity_penalty = self._brevity_penalty(messages, self._task_type(task_payload, case_payload))
+        turn_quality = self._turn_score_quality(messages)
         late_penalty = min(6, len(late_satisfied_rules) * 2)
         next_step_penalty = 0 if self._has_any(self._assistant_text(messages), ["下一步", "建议", "提交", "反馈", "处理结果", "稍后再打", "提醒到这里"]) else 8
+        uncovered = len(rule_result.get("full_flow_expected_steps", {}).get("uncovered_steps", []))
 
-        task_completion = self._clamp(45 + coverage * 55 - next_step_penalty)
-        instruction_following = self._clamp(100 - len(missed_rules) * 8 - total_violation_count * 18 - late_penalty)
+        task_completion = self._clamp(45 + coverage * 55 - next_step_penalty - uncovered * 10)
+        instruction_following = self._clamp(100 - len(missed_rules) * 8 - total_violation_count * 18 - late_penalty - uncovered * 5)
         call_flow_coverage = self._clamp(45 + call_flow_ratio * 55 - max(0, len(rule_result.get("call_flow_rules", [])) - len(matched_call_flow)) * 3 - late_penalty * 0.5)
         constraint_compliance = self._clamp(100 - total_violation_count * 22 - self._risk_phrase_penalty(messages) - brevity_penalty)
         context_consistency = self._clamp(96 - repetition_penalty - unanswered_penalty)
@@ -215,6 +224,16 @@ class RuleJudge:
             "failed_rule_count": len(missed_rules) + len(violated_rules),
             "safety_compliance": constraint_compliance,
         }
+        if turn_quality:
+            quality_cap = float(turn_quality["quality_cap"])
+            metrics["task_completion"] = min(metrics["task_completion"], self._clamp(quality_cap + 10))
+            metrics["instruction_following"] = min(metrics["instruction_following"], quality_cap)
+            metrics["call_flow_coverage"] = min(metrics["call_flow_coverage"], self._clamp(quality_cap + 6))
+            metrics["context_consistency"] = min(metrics["context_consistency"], quality_cap)
+            metrics["response_quality"] = min(metrics["response_quality"], quality_cap)
+            metrics["turn_score_average"] = turn_quality["average"]
+            metrics["low_turn_count"] = turn_quality["low_turn_count"]
+            metrics["turn_score_cap"] = quality_cap
         score = self._weighted_score(metrics)
 
         failed_rules = missed_rules + violated_rules
@@ -228,6 +247,9 @@ class RuleJudge:
                 "unanswered_penalty": unanswered_penalty,
                 "next_step_penalty": next_step_penalty,
                 "brevity_penalty": brevity_penalty,
+                "turn_score_average": turn_quality.get("average", 0) if turn_quality else 0,
+                "low_turn_count": turn_quality.get("low_turn_count", 0) if turn_quality else 0,
+                "turn_score_cap": turn_quality.get("quality_cap", 100) if turn_quality else 100,
             },
         )
         metric_explanations = self._metric_explanations(metric_details)
@@ -249,13 +271,16 @@ class RuleJudge:
             "active_rule_names": rule_result["active_rule_names"],
             "deduction_reason": rule_result["deduction_reason"],
             "score_breakdown": {
-                "task_completion": task_completion,
-                "instruction_following": instruction_following,
-                "call_flow_coverage": call_flow_coverage,
-                "constraint_compliance": constraint_compliance,
-                "context_consistency": context_consistency,
-                "response_quality": response_quality,
+                "task_completion": metrics["task_completion"],
+                "instruction_following": metrics["instruction_following"],
+                "call_flow_coverage": metrics["call_flow_coverage"],
+                "constraint_compliance": metrics["constraint_compliance"],
+                "context_consistency": metrics["context_consistency"],
+                "response_quality": metrics["response_quality"],
                 "failed_rule_count": len(failed_rules),
+                "turn_score_average": metrics.get("turn_score_average"),
+                "low_turn_count": metrics.get("low_turn_count"),
+                "turn_score_cap": metrics.get("turn_score_cap"),
             },
             "key_findings": self._build_key_findings(matched_rules, missed_rules, violated_rules, repetition_penalty),
             "improvement_suggestions": suggestions,
@@ -480,22 +505,34 @@ class RuleJudge:
         messages: List[Dict[str, Any]],
         rule_result: Dict[str, Any],
     ) -> List[str]:
-        if rule_result.get("current_stage") != "live_difference":
-            return []
         if not rule_result.get("missed_rules"):
             return []
-        context_text = self._joined(
-            [item.get("user_message", "") for item in messages],
-            [item.get("assistant_message", "") for item in messages],
-        )
-        if not self._has_any(context_text, ["区别", "标准直播", "低延迟", "5-10", "1-2", "互动", "大班", "小班", "实操"]):
-            return []
+        stage = rule_result.get("current_stage", "")
         recoverable = []
         for rule in rule_result.get("missed_rules", []):
-            if rule in {
-                "是否说明标准直播延迟 5-10 秒、费用较低",
-                "是否说明低延迟直播延迟 1-2 秒、互动更流畅",
-            }:
+            if rule in {"是否回复自然简短", "是否识别负责人"}:
+                continue
+            if self._has_any(
+                rule,
+                [
+                    "是否说明标准直播延迟",
+                    "是否说明低延迟直播延迟",
+                    "是否说明企业微信添加逻辑",
+                    "是否说明低延迟可能费用更高",
+                    "是否询问当前发布方式",
+                    "是否给商家发言机会",
+                    "是否禁止承诺优惠券",
+                    "是否说明新增",
+                    "是否根据前台转达",
+                    "是否说“就1分钟",
+                    "是否继续简短",
+                    "是否说“那我稍后再打",
+                    "是否立即结束通话",
+                    "是否不继续推销",
+                ],
+            ):
+                recoverable.append(rule)
+            if rule == "是否询问对方是否知道低延迟直播" and stage not in {"awareness_check", "owner"}:
                 recoverable.append(rule)
         return self._dedupe(recoverable)
 
@@ -581,6 +618,77 @@ class RuleJudge:
             rule_result.get("hidden_guardrail_rules", {}).get("violated", []),
         )
         rule_result["full_flow_expected_steps"] = status
+        return rule_result
+
+    def _resolve_completed_pending_rules(
+        self,
+        task_payload: Dict[str, Any],
+        case_payload: Dict[str, Any],
+        messages: List[Dict[str, Any]],
+        rule_result: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        pending_rules = list(rule_result.get("pending_rules", []))
+        if not pending_rules:
+            return rule_result
+
+        resolved: List[str] = []
+        matched_rules = rule_result.setdefault("matched_rules", [])
+        matched_evidence = rule_result.setdefault("matched_evidence", {})
+
+        for rule in pending_rules:
+            evidence = matched_evidence.get(rule)
+            if not evidence and rule not in matched_rules:
+                evidence = self._find_required_evidence(rule, messages, task_payload, case_payload)
+            if not evidence and rule in matched_rules:
+                evidence = self._fallback_evidence(messages)
+            if not evidence:
+                continue
+
+            resolved.append(rule)
+            if rule not in matched_rules:
+                matched_rules.append(rule)
+            matched_evidence[rule] = evidence
+            for bucket in ["required_rules", "call_flow_rules", "active_rule_names"]:
+                rule_result.setdefault(bucket, [])
+                if rule not in rule_result[bucket]:
+                    rule_result[bucket].append(rule)
+            active_rules = rule_result.setdefault("active_rules", {})
+            for bucket in ["active_rule_names", "stage_rules"]:
+                active_rules.setdefault(bucket, [])
+                if rule not in active_rules[bucket]:
+                    active_rules[bucket].append(rule)
+
+        if not resolved:
+            return rule_result
+
+        resolved_set = set(resolved)
+        rule_result["pending_rules"] = [rule for rule in pending_rules if rule not in resolved_set]
+        rule_result["missed_rules"] = [
+            rule for rule in rule_result.get("missed_rules", []) if rule not in resolved_set
+        ]
+        rule_result["missed_evidence"] = {
+            rule: evidence
+            for rule, evidence in rule_result.get("missed_evidence", {}).items()
+            if rule not in resolved_set
+        }
+        rule_result["failed_rules"] = rule_result["missed_rules"] + list(rule_result.get("violated_rules", []))
+        for bucket in ["untriggered_rules", "not_applicable_rules"]:
+            rule_result[bucket] = [rule for rule in rule_result.get(bucket, []) if rule not in resolved_set]
+
+        active_rules = rule_result.setdefault("active_rules", {})
+        for bucket in ["pending_rules", "untriggered_rules", "not_applicable_rules"]:
+            active_rules[bucket] = [rule for rule in active_rules.get(bucket, []) if rule not in resolved_set]
+
+        visible = rule_result.setdefault("visible_business_rules", {})
+        visible["matched"] = matched_rules
+        visible["failed"] = rule_result["failed_rules"]
+        visible["pending"] = [rule for rule in visible.get("pending", []) if rule not in resolved_set]
+        visible["untriggered"] = [rule for rule in visible.get("untriggered", []) if rule not in resolved_set]
+
+        lifecycle = rule_result.setdefault("rule_lifecycle", {})
+        lifecycle["satisfied"] = matched_rules
+        lifecycle["pending"] = rule_result["pending_rules"]
+        lifecycle["failed_final"] = rule_result["failed_rules"]
         return rule_result
 
     def _full_flow_expected_step_status(
@@ -671,11 +779,14 @@ class RuleJudge:
             return "case_triggered"
         context_text = self._context_text(case_payload, messages)
         last_user = messages[-1].get("user_message", "") if messages else case_payload.get("initial_message", "")
+        last_assistant = messages[-1].get("assistant_message", "") if messages else ""
         assistant_text = self._assistant_text(messages)
 
         if self._has_any(last_user, ["开车", "在开车"]):
             return "closing"
-        if self._has_any(last_user, ["没问题", "知道了", "不用了", "再见"]):
+        if self._has_any(last_user, ["没问题", "知道了", "不用了", "再见", "清楚了", "先这样", "就这样"]):
+            return "closing"
+        if self._has_any(last_assistant, ["祝课程顺利", "招生满满", "后续可再联系", "先这样"]):
             return "closing"
         if self._has_any(last_user, ["费用", "贵不贵", "优惠", "券", "便宜"]):
             return "fee_check"
@@ -1776,6 +1887,16 @@ class RuleJudge:
             return None
         if rule == "是否给商家发言机会":
             return self._user_turn_opportunity_evidence(messages, self._task_type(task_payload, case_payload))
+        if rule == "是否确认是否还有问题":
+            direct = self._find_evidence(self._required_keywords(rule), messages, require_positive=True)
+            if direct:
+                return direct
+            for item in messages:
+                user_message = item.get("user_message", "")
+                assistant_message = item.get("assistant_message", "")
+                if self._has_any(user_message, ["没问题", "清楚了", "先这样", "不用了", "就这样"]):
+                    return self._evidence_row(item, assistant_message or user_message)
+            return None
         if rule == "是否说明标准直播延迟 5-10 秒、费用较低":
             for item in messages:
                 text = item.get("assistant_message", "")
@@ -1995,9 +2116,17 @@ class RuleJudge:
             task_reason = "流程基本完成，但结尾的下一步动作或收尾确认不够稳定。"
 
         hidden_violated = rule_result.get("hidden_guardrail_rules", {}).get("violated", [])
+        low_turn_count = int(penalties.get("low_turn_count", 0) or 0)
+        turn_score_average = float(penalties.get("turn_score_average", 0) or 0)
+        turn_quality_reason = (
+            f"非开场轮平均规则分 {round(turn_score_average, 2)}，"
+            f"其中 {low_turn_count} 轮低于 70 分，说明中间轮推进不稳定。"
+        )
         instruction_reason = "未发现明显指令违规。"
         if rule_result["missed_rules"] or rule_result["violated_rules"] or hidden_violated:
             instruction_reason = "存在遗漏规则或禁止规则风险。"
+        elif low_turn_count:
+            instruction_reason = turn_quality_reason
 
         call_flow_reason = "外呼主流程节点覆盖较完整。"
         missed_call_flow = [
@@ -2005,6 +2134,8 @@ class RuleJudge:
         ]
         if missed_call_flow:
             call_flow_reason = "外呼流程节点未完整覆盖：" + "、".join(missed_call_flow)
+        elif low_turn_count:
+            call_flow_reason = "最终流程覆盖较完整，但部分中间轮次在当轮活跃规则上得分偏低。"
 
         constraint_reason = "未发现明显约束违规。"
         if rule_result["violated_rules"]:
@@ -2019,10 +2150,14 @@ class RuleJudge:
             context_reason = "部分用户追问没有被充分回应。"
         elif penalties["repetition_penalty"]:
             context_reason = "多轮回复存在一定重复，影响上下文推进感。"
+        elif low_turn_count:
+            context_reason = turn_quality_reason
 
         quality_reason = "回复结构较完整，包含核实、解释和后续动作。"
         if penalties["repetition_penalty"] or penalties["next_step_penalty"] or penalties.get("brevity_penalty"):
             quality_reason = "回复存在重复、篇幅过长或下一步动作不够明确。"
+        elif low_turn_count:
+            quality_reason = turn_quality_reason
 
         return {
             "task_completion": self._metric_detail(
@@ -2383,6 +2518,36 @@ class RuleJudge:
         if avg_len > 140:
             return 10
         return 0
+
+    def _turn_score_quality(self, messages: List[Dict[str, Any]]) -> Dict[str, Any]:
+        scores: List[float] = []
+        low_turns: List[int] = []
+        for item in messages:
+            if "rule_score" not in item:
+                continue
+            detail = item.get("detail") or {}
+            if item.get("turn_index") == 0 or detail.get("message_phase") == "opening":
+                continue
+            try:
+                score = float(item.get("rule_score"))
+            except (TypeError, ValueError):
+                continue
+            score = self._clamp(score)
+            scores.append(score)
+            if score < 70:
+                try:
+                    low_turns.append(int(item.get("turn_index") or len(scores)))
+                except (TypeError, ValueError):
+                    low_turns.append(len(scores))
+        if not scores:
+            return {}
+        average = round(sum(scores) / len(scores), 2)
+        return {
+            "average": average,
+            "low_turn_count": len(low_turns),
+            "low_turns": low_turns,
+            "quality_cap": self._clamp(average + 12, minimum=60, maximum=100),
+        }
 
     def _weighted_score(self, metrics: Dict[str, float]) -> float:
         return round(sum(float(metrics.get(key, 0)) * weight for key, weight in SCORE_WEIGHTS.items()), 2)

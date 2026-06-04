@@ -286,7 +286,7 @@ class UserSimulatorAgent:
     ) -> str:
         assistant_text = "\n".join(str(item.get("assistant_message", "") or "") for item in messages)
         if event == "technical_issue":
-            if self._has_any(assistant_text, ["进【我的】", "进入【我的】", "点直播平台管理", "选择【直播平台】"]):
+            if self._has_any(assistant_text, ["进【我的】", "进入【我的】", "直播平台管理", "服务商", "选择【直播平台】"]):
                 return "到了，继续。"
             return "第三方系统看不到是哪一步？"
         if event == "price_sensitive":
@@ -842,7 +842,7 @@ class UserSimulatorAgent:
                     return self._course_branch_answer(case_payload, "visibility"), "回答前端是否可见", True, "in_progress", 0, 0
                 if self._has_any(last_assistant, ["Web", "校务", "SaaS", "发布方式"]):
                     return self._course_branch_answer(case_payload, "publish_method"), "回答发布方式", True, "in_progress", 0, 0
-                if self._has_any(last_assistant, ["进【我的】", "进入【我的】", "点直播平台管理", "选择【直播平台】"]):
+                if self._has_any(last_assistant, ["进【我的】", "进入【我的】", "直播平台管理", "服务商", "选择【直播平台】"]):
                     return self._variant_text(memory_state, "到了，下一步？", "我进去了，继续说。", "找到这个入口了，然后呢？"), "等待下一步配置", True, "in_progress", 0, 0
                 if self._has_any(last_assistant, ["勾选低延迟", "保存", "明天再查看"]):
                     return self._variant_text(memory_state, "继续。", "行，后面呢？", "可以，接着说。"), "接受配置路径并继续", True, "in_progress", -1, 1

@@ -11,7 +11,7 @@
         <div class="message-stack">
           <div class="message-name user-name">用户模拟器</div>
           <div class="bubble user-bubble">{{ item.userMessage || '暂无用户发言' }}</div>
-          <div v-if="item.userIntent || item.goalProgress || item.shouldContinue !== undefined" class="state-row user-state-row">
+          <div v-if="props.showUserDebug && (item.userIntent || item.goalProgress || item.shouldContinue !== undefined)" class="state-row user-state-row">
             <el-tag v-if="item.userEvent" type="warning">事件：{{ item.userEvent }}</el-tag>
             <el-tag v-if="item.userIntent" type="info">意图：{{ item.userIntent }}</el-tag>
             <el-tag v-if="item.goalProgress" type="info">进度：{{ item.goalProgress }}</el-tag>
@@ -19,7 +19,7 @@
               {{ item.shouldContinue === false ? '不继续' : '继续' }}
             </el-tag>
           </div>
-          <el-collapse v-if="item.debugStateTags.length" class="debug-collapse">
+          <el-collapse v-if="props.showUserDebug && item.debugStateTags.length" class="debug-collapse">
             <el-collapse-item title="调试信息" :name="`debug-${item.key}`">
               <p class="debug-note">模拟状态，仅用于生成下一轮用户，不参与评分。</p>
               <div class="state-row user-state-row">
@@ -38,89 +38,6 @@
           <div class="bubble assistant-bubble" :class="{ 'is-streaming': item.isStreaming }">
             {{ item.assistantMessage || (item.isStreaming ? '' : '暂无回复内容') }}
           </div>
-          <div class="knowledge-row">
-            <label>引用知识点：</label>
-            <div v-if="item.knowledgeRefs.length" class="knowledge-tags">
-              <el-tag v-for="ref in item.knowledgeRefs" :key="`knowledge-${item.key}-${ref.key}`" type="info">
-                {{ ref.type }}：{{ ref.title }}
-              </el-tag>
-            </div>
-            <span v-else class="muted">本轮未引用知识库</span>
-          </div>
-          <div class="turn-meta">
-            <el-tag type="info">响应 {{ item.latencyMs }} ms</el-tag>
-            <el-tag v-if="item.isOpening" type="info">Opening Line</el-tag>
-            <el-tag :type="scoreType(item.score)">轮次得分 {{ item.score }}</el-tag>
-            <el-tag v-if="item.currentStage" type="info">阶段：{{ item.currentStage }}</el-tag>
-            <el-tag v-for="rule in item.visibleMatchedRules" :key="`matched-${item.key}-${rule}`" type="success">
-              命中：{{ rule }}
-            </el-tag>
-            <el-tag v-for="rule in item.visibleFailedRules" :key="`failed-${item.key}-${rule}`" type="danger">
-              失败：{{ rule }}
-            </el-tag>
-            <el-tag v-for="rule in item.visibleLateSatisfiedRules" :key="`late-${item.key}-${rule}`" type="warning">
-              迟补：{{ rule }}
-            </el-tag>
-            <el-tag type="info">待完成 {{ item.pendingRules.length }}</el-tag>
-            <el-tag type="info">未触发 {{ item.untriggeredRules.length }}</el-tag>
-          </div>
-          <el-collapse v-if="item.memoryTags.length" class="debug-collapse">
-            <el-collapse-item title="上下文记忆" :name="`memory-${item.key}`">
-              <p class="debug-note">仅限当前 run，用于解释阶段、分支和待覆盖事项。</p>
-              <div class="state-row user-state-row">
-                <el-tag v-for="tag in item.memoryTags" :key="`memory-${item.key}-${tag}`" type="info">{{ tag }}</el-tag>
-              </div>
-            </el-collapse-item>
-          </el-collapse>
-          <p v-if="item.showDeductionReason" class="deduction-note">扣分原因：{{ item.deductionReason }}</p>
-          <el-collapse v-if="item.hasMoreRules" class="rule-collapse">
-            <el-collapse-item title="展开查看规则详情" :name="`rules-${item.key}`">
-              <div class="turn-meta collapse-meta">
-                <el-tag
-                  v-for="rule in item.matchedRules"
-                  :key="`matched-all-${item.key}-${rule}`"
-                  type="success"
-                >
-                  命中：{{ rule }}
-                </el-tag>
-                <el-tag
-                  v-for="rule in item.missedRules"
-                  :key="`missed-all-${item.key}-${rule}`"
-                  type="warning"
-                >
-                  遗漏：{{ rule }}
-                </el-tag>
-                <el-tag
-                  v-for="rule in item.violatedRules"
-                  :key="`violated-all-${item.key}-${rule}`"
-                  type="danger"
-                >
-                  违规：{{ rule }}
-                </el-tag>
-                <el-tag
-                  v-for="rule in item.lateSatisfiedRules"
-                  :key="`late-all-${item.key}-${rule}`"
-                  type="warning"
-                >
-                  延迟补足：{{ rule }}
-                </el-tag>
-                <el-tag
-                  v-for="rule in item.pendingRules"
-                  :key="`pending-all-${item.key}-${rule}`"
-                  type="info"
-                >
-                  待完成：{{ rule }}
-                </el-tag>
-                <el-tag
-                  v-for="rule in item.untriggeredRules"
-                  :key="`untriggered-all-${item.key}-${rule}`"
-                  type="info"
-                >
-                  未触发：{{ rule }}
-                </el-tag>
-              </div>
-            </el-collapse-item>
-          </el-collapse>
         </div>
       </div>
     </section>
@@ -131,7 +48,8 @@
 import { computed } from 'vue'
 
 const props = defineProps({
-  messages: { type: Array, default: () => [] }
+  messages: { type: Array, default: () => [] },
+  showUserDebug: { type: Boolean, default: false }
 })
 
 const toArray = (value) => {
@@ -200,17 +118,6 @@ const turns = computed(() =>
     const detail = item.detail || item.metadata || {}
     const missedRules = toArray(item.missed_rules ?? item.missedRules)
     const violatedRules = toArray(item.violated_rules ?? item.violatedRules)
-    const pendingRules = toArray(detail.pending_rules ?? detail.pendingRules)
-    const lifecycle = detail.rule_lifecycle || detail.ruleLifecycle || {}
-    const lateSatisfiedRules = toArray(detail.late_satisfied_rules ?? detail.lateSatisfiedRules ?? lifecycle.late_satisfied ?? lifecycle.lateSatisfied)
-    const untriggeredRules = toArray(
-      detail.untriggered_rules ??
-        detail.untriggeredRules ??
-        detail.not_applicable_rules ??
-        detail.notApplicableRules
-    )
-    const matchedRules = toArray(item.matched_rules ?? item.matchedRules)
-    const failedRules = [...missedRules, ...violatedRules]
     const turnIndex = item.turn_index ?? item.turnIndex ?? index + 1
     const isOpening = detail.message_phase === 'opening' || (Number(turnIndex) === 0 && !pickMessage(item, 'user_message', 'user'))
     const knowledgeRefs = toArray(detail.retrieved_knowledge ?? detail.retrievedKnowledge).map((chunk, chunkIndex) => ({
@@ -220,7 +127,6 @@ const turns = computed(() =>
       source: chunk.source || '',
       content: chunk.content || ''
     }))
-    const state = detail.user_state || detail.userState || {}
     const memory = detail.memory_state || detail.memoryState || {}
     return {
       key: item.id || `${item.run_id || 'turn'}-${item.turn_index || index + 1}`,
@@ -233,25 +139,10 @@ const turns = computed(() =>
         pickMessage(item, 'model_message', 'model'),
       latencyMs: Number(item.latency_ms ?? item.latency ?? 0).toFixed(0),
       score: Number.isFinite(score) ? Number(score.toFixed(1)) : 0,
-      matchedRules,
-      missedRules,
-      violatedRules,
-      lateSatisfiedRules,
-      pendingRules,
-      untriggeredRules,
-      visibleMatchedRules: matchedRules.slice(0, 3),
-      visibleFailedRules: failedRules.slice(0, 3),
-      visibleLateSatisfiedRules: lateSatisfiedRules.slice(0, 2),
-      hasMoreRules:
-        matchedRules.length > 3 ||
-        failedRules.length > 3 ||
-        lateSatisfiedRules.length > 0 ||
-        pendingRules.length > 0 ||
-        untriggeredRules.length > 0,
       currentStage: detail.current_stage || detail.currentStage || '',
       userIntent: detail.user_intent || detail.userIntent || '',
       userEvent: memory.user_event || (detail.user_metadata || detail.userMetadata || {}).user_event || '',
-      goalProgress: state.goal_progress || state.goalProgress || '',
+      goalProgress: (detail.user_state || detail.userState || {}).goal_progress || (detail.user_state || detail.userState || {}).goalProgress || '',
       debugStateTags: buildDebugStateTags(detail),
       memoryTags: buildMemoryTags(detail),
       shouldContinue: detail.should_continue ?? detail.shouldContinue,
@@ -387,13 +278,8 @@ const scoreType = (score) => {
   margin-top: 2px;
 }
 
-.rule-collapse,
 .debug-collapse {
   margin-top: 2px;
-}
-
-.collapse-meta {
-  margin-top: 0;
 }
 
 .debug-note {

@@ -3,7 +3,7 @@
     <div class="page-header">
       <div>
         <h1>模型配置</h1>
-        <p>查看被测模型 provider 接入状态；mock_fallback 仅作演示兜底，不代表真实 AI，API Key 只在后端环境变量中配置。</p>
+        <p>查看被测模型接入状态；本地兜底模型仅作演示兜底，不代表真实模型能力，接口密钥只在后端环境变量中配置。</p>
       </div>
       <el-button :icon="Refresh" @click="loadProviders">刷新</el-button>
     </div>
@@ -11,19 +11,23 @@
     <div class="panel provider-guidance">
       <div>
         <h2>真实模型接入说明</h2>
-        <p>mock_fallback 只用于无 API Key 或演示环境不可用时保证流程跑通；openai_compatible 和 custom_endpoint 才是真实模型接入方式。</p>
+        <p>本地兜底模型只用于无接口密钥或演示环境不可用时保证流程跑通；真实大模型接口和自定义模型接口才是真实模型接入方式。</p>
       </div>
-      <el-tag type="info">API Key 不在前端保存</el-tag>
+      <el-tag type="info">接口密钥不在前端保存</el-tag>
     </div>
 
     <div class="panel">
       <div class="panel-title">
-        <h2>Provider 列表</h2>
-        <span class="muted">不展示 API Key 明文</span>
+        <h2>模型接入方式列表</h2>
+        <span class="muted">不展示接口密钥明文</span>
       </div>
       <el-table :data="providers" v-loading="loading">
-        <el-table-column prop="name" label="provider 名称" min-width="160" />
-        <el-table-column prop="type" label="provider 类型" width="170" />
+        <el-table-column label="接入方式" min-width="170">
+          <template #default="{ row }">{{ displayProvider(row.name) }}</template>
+        </el-table-column>
+        <el-table-column label="接入类型" width="170">
+          <template #default="{ row }">{{ displayProviderType(row) }}</template>
+        </el-table-column>
         <el-table-column label="当前是否启用" width="160">
           <template #default="{ row }">
             <div class="status-tags">
@@ -32,11 +36,11 @@
             </div>
           </template>
         </el-table-column>
-        <el-table-column prop="base_url" label="Base URL" min-width="210" show-overflow-tooltip>
+        <el-table-column prop="base_url" label="接口地址" min-width="210" show-overflow-tooltip>
           <template #default="{ row }">{{ row.base_url || '-' }}</template>
         </el-table-column>
-        <el-table-column prop="model_name" label="Model Name" min-width="150" show-overflow-tooltip />
-        <el-table-column prop="endpoint" label="Endpoint" min-width="210" show-overflow-tooltip>
+        <el-table-column prop="model_name" label="模型名称" min-width="150" show-overflow-tooltip />
+        <el-table-column prop="endpoint" label="接口路径" min-width="210" show-overflow-tooltip>
           <template #default="{ row }">{{ row.endpoint || '-' }}</template>
         </el-table-column>
         <el-table-column label="测试连接" width="130" fixed="right">
@@ -52,14 +56,14 @@
     <div class="grid two provider-notes">
       <div v-for="provider in providers" :key="provider.name" class="panel provider-card">
         <div class="provider-card-head">
-          <h2>{{ provider.name }}</h2>
+          <h2>{{ displayProvider(provider.name) }}</h2>
           <el-tag :type="provider.enabled ? 'success' : 'info'">{{ provider.enabled ? '可用' : '需配置' }}</el-tag>
         </div>
-        <p>{{ provider.description }}</p>
+        <p>{{ displayProviderDescription(provider) }}</p>
         <div class="provider-meta">
-          <span>类型</span><strong>{{ provider.type }}</strong>
-          <span>Model Name</span><strong>{{ provider.model_name || '-' }}</strong>
-          <span>API Key</span><strong>{{ provider.api_key_configured ? '已在后端配置' : '未展示 / 未配置' }}</strong>
+          <span>类型</span><strong>{{ displayProviderType(provider) }}</strong>
+          <span>模型名称</span><strong>{{ provider.model_name || '-' }}</strong>
+          <span>接口密钥</span><strong>{{ provider.api_key_configured ? '已在后端配置' : '未展示 / 未配置' }}</strong>
         </div>
       </div>
     </div>
@@ -71,10 +75,14 @@ import { onMounted, ref } from 'vue'
 import { ElMessage } from 'element-plus'
 import { Connection, Refresh } from '@element-plus/icons-vue'
 import request from '../api/request'
+import { providerDescription, providerDisplayName, providerTypeLabel } from '../utils/providerLabels'
 
 const providers = ref([])
 const loading = ref(false)
 const testing = ref('')
+const displayProvider = (provider) => providerDisplayName(provider)
+const displayProviderDescription = (provider) => providerDescription(provider.name, provider.description)
+const displayProviderType = (provider) => providerTypeLabel(provider.name, provider.type)
 
 const loadProviders = async () => {
   loading.value = true

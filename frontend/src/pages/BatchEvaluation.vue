@@ -3,7 +3,7 @@
     <div class="page-header">
       <div>
         <h1>批量评测</h1>
-        <p>按任务、用例范围和模型 provider 批量执行评测，汇总平均分、通过率和常见失败规则。</p>
+        <p>按任务、用例范围和被测模型接入方式批量执行评测，汇总平均分、通过率和常见失败规则。</p>
       </div>
     </div>
 
@@ -29,9 +29,14 @@
               <el-option v-for="item in caseOptions" :key="item.id" :label="item.label" :value="item.id" />
             </el-select>
           </el-form-item>
-          <el-form-item label="被测模型 provider">
+          <el-form-item label="被测模型接入方式">
             <el-select v-model="modelProviders" multiple collapse-tags style="width: 100%">
-              <el-option v-for="provider in providerOptions" :key="provider" :label="provider" :value="provider" />
+              <el-option
+                v-for="provider in providerOptions"
+                :key="provider.value"
+                :label="provider.label"
+                :value="provider.value"
+              />
             </el-select>
           </el-form-item>
           <el-form-item label="重复次数">
@@ -46,7 +51,7 @@
       <div class="panel">
         <div class="panel-title">
           <h2>运行进度</h2>
-          <el-tag v-if="summary">Batch #{{ summary.batch_id }}</el-tag>
+          <el-tag v-if="summary">批次 #{{ summary.batch_id }}</el-tag>
         </div>
         <template v-if="summary">
           <el-progress :percentage="progressPercent" :stroke-width="12" />
@@ -84,8 +89,8 @@
 
         <div v-if="modelSummary.length > 1" class="panel">
           <div class="panel-title">
-            <h2>模型 provider 对比</h2>
-            <span class="muted">最佳：{{ summary.best_model_provider || '-' }}</span>
+            <h2>模型接入方式对比</h2>
+            <span class="muted">最佳：{{ displayProvider(summary.best_model_provider) }}</span>
           </div>
           <div ref="modelChartRef" class="chart"></div>
         </div>
@@ -111,7 +116,9 @@
         <el-table :data="reportList" max-height="520">
           <el-table-column prop="task_name" label="任务" min-width="210" show-overflow-tooltip />
           <el-table-column prop="case_name" label="用例" min-width="190" show-overflow-tooltip />
-          <el-table-column prop="model_provider" label="provider" width="150" />
+          <el-table-column label="接入方式" width="170">
+            <template #default="{ row }">{{ displayProvider(row.model_provider) }}</template>
+          </el-table-column>
           <el-table-column prop="repeat_index" label="重复" width="80" />
           <el-table-column prop="total_score" label="得分" width="90" />
           <el-table-column prop="avg_latency_ms" label="平均响应" width="110" />
@@ -145,6 +152,7 @@ import * as echarts from 'echarts'
 import { VideoPlay, View } from '@element-plus/icons-vue'
 import request from '../api/request'
 import MetricCard from '../components/MetricCard.vue'
+import { PROVIDER_OPTIONS, providerDisplayName } from '../utils/providerLabels'
 
 const tasks = ref([])
 const cases = ref([])
@@ -158,7 +166,8 @@ const summary = ref(null)
 const modelChartRef = ref(null)
 let modelChart
 
-const providerOptions = ['mock_fallback', 'openai_compatible', 'custom_endpoint']
+const providerOptions = PROVIDER_OPTIONS
+const displayProvider = (provider) => providerDisplayName(provider)
 
 const taskNameById = computed(() => Object.fromEntries(tasks.value.map((task) => [task.id, task.name])))
 const caseOptions = computed(() =>
@@ -221,7 +230,7 @@ const startBatch = async () => {
     return
   }
   if (!modelProviders.value.length) {
-    ElMessage.warning('请选择被测模型 provider')
+    ElMessage.warning('请选择被测模型接入方式')
     return
   }
   running.value = true
@@ -254,7 +263,7 @@ const renderModelChart = () => {
     grid: { left: 42, right: 18, top: 30, bottom: 36 },
     xAxis: {
       type: 'category',
-      data: modelSummary.value.map((item) => item.model_provider),
+      data: modelSummary.value.map((item) => displayProvider(item.model_provider)),
       axisLabel: { color: '#94a3b8' },
       axisTick: { show: false },
       axisLine: { lineStyle: { color: 'rgba(148, 163, 184, 0.2)' } }

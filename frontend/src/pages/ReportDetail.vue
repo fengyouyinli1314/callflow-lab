@@ -30,11 +30,11 @@
         <div class="report-meta-grid">
           <div><span>任务名称</span><strong>{{ taskName }}</strong></div>
           <div><span>用例名称</span><strong>{{ caseName }}</strong></div>
-          <div><span>被测模型 provider</span><strong>{{ modelProvider }}</strong></div>
+          <div><span>被测模型接入方式</span><strong>{{ modelProvider }}</strong></div>
           <div><span>被测模型名称</span><strong>{{ modelName }}</strong></div>
         </div>
         <el-divider />
-        <div class="panel-title slim-title"><h2>LLM 评估结论</h2></div>
+        <div class="panel-title slim-title"><h2>语义评估结论</h2></div>
         <p class="llm-reason">{{ llmJudgeResult.overall_reason || '暂无明显扣分原因' }}</p>
         <div v-if="keyFindings.length" class="finding-list">
           <el-tag v-for="item in keyFindings" :key="item" type="info">{{ item }}</el-tag>
@@ -92,19 +92,6 @@
           <small>权重 {{ item.weightText }} / 贡献 {{ item.weightedScore }}</small>
         </div>
       </div>
-    </div>
-
-    <div class="panel report-section">
-      <div class="panel-title"><h2>上下文记忆</h2></div>
-      <p class="active-rules-note">{{ memorySummary }}</p>
-      <div v-if="memoryRows.length" class="formula-grid">
-        <div v-for="item in memoryRows" :key="item.key" class="formula-item">
-          <span>{{ item.label }}</span>
-          <strong>{{ item.value }}</strong>
-          <small>{{ item.note }}</small>
-        </div>
-      </div>
-      <el-empty v-else description="暂无上下文记忆快照" />
     </div>
 
     <div class="panel report-section">
@@ -186,6 +173,7 @@ import request from '../api/request'
 import ConversationTimeline from '../components/ConversationTimeline.vue'
 import FailureTable from '../components/FailureTable.vue'
 import ScoreRadar from '../components/ScoreRadar.vue'
+import { providerDisplayName } from '../utils/providerLabels'
 
 const route = useRoute()
 const report = ref({
@@ -225,8 +213,13 @@ const llmJudgeResult = computed(() => report.value.llm_judge_result || report.va
 const taskName = computed(() => task.value.name || `任务 #${report.value.task_id || '-'}`)
 const caseName = computed(() => reportCase.value.name || `用例 #${report.value.case_id || '-'}`)
 const firstMessageDetail = computed(() => (report.value.messages || [])[0]?.detail || {})
-const modelProvider = computed(() => reportRun.value.model_provider || firstMessageDetail.value.model_provider || '-')
-const modelName = computed(() => reportRun.value.model_name || firstMessageDetail.value.model_name || modelProvider.value || '-')
+const rawModelProvider = computed(() => reportRun.value.model_provider || firstMessageDetail.value.model_provider || '')
+const modelProvider = computed(() => providerDisplayName(rawModelProvider.value))
+const modelName = computed(() => {
+  const rawName = reportRun.value.model_name || firstMessageDetail.value.model_name || ''
+  if (!rawName || rawName === rawModelProvider.value) return providerDisplayName(rawModelProvider.value)
+  return rawName
+})
 const keyFindings = computed(() => report.value.explainability?.key_findings || [])
 const suggestions = computed(
   () =>
@@ -306,44 +299,6 @@ const scoreFormula = computed(() => {
   }
 })
 
-const memoryState = computed(() => report.value.memory_state || report.value.memoryState || report.value.explainability?.memory_state || {})
-const memorySummary = computed(() => memoryState.value.summary || 'memory_state 仅记录当前 run 内的阶段、分支、模型表现和待覆盖事项。')
-const memoryRows = computed(() => {
-  const memory = memoryState.value || {}
-  const flow = memory.flow_memory || memory.flowMemory || {}
-  const branch = memory.user_branch_memory || memory.userBranchMemory || {}
-  const performance = memory.model_performance_memory || memory.modelPerformanceMemory || {}
-  const unfinished = memory.unfinished_items_memory || memory.unfinishedItemsMemory || {}
-  if (!Object.keys(memory).length) return []
-  const rows = [
-    {
-      key: 'stage',
-      label: '当前阶段',
-      value: flow.current_stage || '-',
-      note: `已覆盖 ${flow.covered_steps?.length || 0} / 待覆盖 ${flow.pending_steps?.length || 0}`
-    },
-    {
-      key: 'branch',
-      label: '用户分支',
-      value: branch.publish_method || branch.delivery_attitude || branch.awareness || '-',
-      note: branch.busy ? '用户忙，需要简短处理' : branch.driving ? '用户开车，应稍后再打' : '按当前用例分支推进'
-    },
-    {
-      key: 'performance',
-      label: '模型表现',
-      value: `打断 ${performance.interrupted_turns?.length || 0}`,
-      note: `啰嗦 ${performance.verbose_turns?.length || 0} / 重复 ${performance.repeated_turns?.length || 0}`
-    },
-    {
-      key: 'next',
-      label: '下一步',
-      value: unfinished.next_suggested_step || '-',
-      note: unfinished.next_user_prompt || '无待推进事项'
-    }
-  ]
-  return rows
-})
-
 const formulaComponents = computed(() =>
   Object.entries(scoreFormula.value.weights).map(([key, weight]) => {
     const component = scoreFormula.value.components?.[key] || {}
@@ -408,7 +363,7 @@ const evidenceRows = computed(() => {
   const llmEvidence = (llmJudgeResult.value.evidence || []).map((item, index) => ({
     key: `llm-${index}`,
     turnIndex: item.turn_index ?? item.turnIndex ?? '-',
-    userMessage: item.issue || 'LLM 评估证据',
+    userMessage: item.issue || '语义评估证据',
     assistantMessage: item.quote || '-',
     rules: item.deduction || item.deduction_reason || '暂无明显扣分原因'
   }))
@@ -537,6 +492,33 @@ onMounted(async () => {
 
 .not-applicable-collapse {
   margin-top: 14px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  overflow: hidden;
+  background: rgba(8, 13, 22, 0.92);
+}
+
+.not-applicable-collapse :deep(.el-collapse-item__wrap),
+.not-applicable-collapse :deep(.el-collapse-item__content),
+.not-applicable-collapse :deep(.el-collapse-item__header) {
+  background: rgba(8, 13, 22, 0.92);
+  color: var(--body-text);
+  border-color: var(--line);
+}
+
+.not-applicable-collapse :deep(.el-collapse-item__header) {
+  padding: 0 12px;
+  font-weight: 650;
+}
+
+.not-applicable-collapse :deep(.el-collapse-item__content) {
+  padding: 12px;
+}
+
+.not-applicable-collapse :deep(.el-tag.el-tag--info) {
+  color: #cbd5e1;
+  background: rgba(148, 163, 184, 0.12);
+  border-color: rgba(148, 163, 184, 0.18);
 }
 
 .knowledge-assessment {

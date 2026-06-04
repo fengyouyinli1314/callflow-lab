@@ -21,23 +21,10 @@
       <MetricCard label="平均响应" :value="summary.avg_latency_ms" suffix="ms" icon="Timer" color="#f87171" />
     </div>
 
-    <div class="panel ai-capability-panel">
-      <div class="panel-title">
-        <h2>AI 能力模块</h2>
-        <span class="muted">mock_fallback 仅用于兜底演示</span>
-      </div>
-      <div class="ai-capability-grid">
-        <div v-for="item in aiCapabilities" :key="item.title" class="ai-capability-item">
-          <strong>{{ item.title }}</strong>
-          <span>{{ item.description }}</span>
-        </div>
-      </div>
-    </div>
-
     <div class="panel agent-workflow-panel">
       <div class="panel-title">
-        <h2>Agent 评测工作流</h2>
-        <span class="muted">Agent 编排 + 轻量 RAG + LLM-as-a-Judge</span>
+        <h2>评测工作流</h2>
+        <span class="muted">任务解析、知识召回、用户模拟、规则评分和语义评审</span>
       </div>
       <div class="agent-flow">
         <div v-for="(item, index) in agentWorkflow" :key="item.title" class="agent-flow-item">
@@ -77,7 +64,7 @@
       </div>
       <el-empty v-if="!recentBatches.length" description="暂无批量评测结果" />
       <el-table v-else :data="recentBatches">
-        <el-table-column prop="batch_id" label="Batch" width="90">
+        <el-table-column prop="batch_id" label="批次" width="90">
           <template #default="{ row }">#{{ row.batch_id }}</template>
         </el-table-column>
         <el-table-column prop="status" label="状态" width="120">
@@ -124,21 +111,14 @@ let failureChart
 const trendData = computed(() => summary.value.recent_score_trend || [])
 const failureData = computed(() => summary.value.failed_rules_top5 || [])
 const recentBatches = computed(() => summary.value.recent_batches || [])
-const aiCapabilities = [
-  { title: '用户模拟器 Agent', description: '根据任务指令、用户画像和历史对话动态生成被外呼对象发言。' },
-  { title: 'Knowledge Retriever', description: '根据用户本轮问题召回官方知识点，辅助回复和评估。' },
-  { title: 'LLM-as-a-Judge 自动评估', description: '结合任务规则、对话证据和指标公式给出语义级评分。' },
-  { title: '真实被测模型接入', description: '通过 openai_compatible 或 custom_endpoint 接入外部模型服务。' },
-  { title: '可解释评测报告', description: '输出分数、规则命中、失败证据、扣分原因和优化建议。' }
-]
 const agentWorkflow = [
   { title: '任务指令解析', description: '解析任务、用例、目标和约束。' },
-  { title: '知识召回', description: '召回 Opening、Flow、FAQ 与 Constraints。' },
-  { title: '用户模拟器 Agent', description: '动态生成被外呼对象的多轮行为。' },
-  { title: '被测模型 Agent', description: '通过 provider 生成被测回复。' },
+  { title: '知识召回', description: '召回开场白、流程、常见问题和约束。' },
+  { title: '用户模拟器', description: '动态生成被外呼对象的多轮行为。' },
+  { title: '被测模型调用', description: '通过所选接入方式生成被测回复。' },
   { title: '规则裁判', description: '检查硬规则、串场和流程覆盖。' },
-  { title: 'Judge Agent', description: '给出语义评分、证据和建议。' },
-  { title: '报告生成 Agent', description: '汇总量化指标和可解释报告。' }
+  { title: '语义评审', description: '给出语义评分、证据和建议。' },
+  { title: '报告生成', description: '汇总量化指标和可解释报告。' }
 ]
 
 const statusLabel = (status) => {
@@ -254,38 +234,10 @@ onBeforeUnmount(() => {
 </script>
 
 <style scoped>
-.ai-capability-panel,
 .agent-workflow-panel,
 .dashboard-charts,
 .recent-batches {
   margin-top: 16px;
-}
-
-.ai-capability-grid {
-  display: grid;
-  grid-template-columns: repeat(5, minmax(0, 1fr));
-  gap: 10px;
-}
-
-.ai-capability-item {
-  display: grid;
-  gap: 6px;
-  min-height: 90px;
-  padding: 12px;
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  background: rgba(22, 32, 51, 0.5);
-}
-
-.ai-capability-item strong {
-  color: var(--text);
-  font-size: 14px;
-}
-
-.ai-capability-item span {
-  color: var(--muted);
-  font-size: 12px;
-  line-height: 1.5;
 }
 
 .agent-flow {
@@ -344,7 +296,6 @@ onBeforeUnmount(() => {
 }
 
 @media (max-width: 720px) {
-  .ai-capability-grid,
   .agent-flow {
     grid-template-columns: 1fr;
   }
@@ -355,7 +306,6 @@ onBeforeUnmount(() => {
 }
 
 @media (min-width: 721px) and (max-width: 1280px) {
-  .ai-capability-grid,
   .agent-flow {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
