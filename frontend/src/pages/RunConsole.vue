@@ -36,12 +36,12 @@
             </el-select>
           </el-form-item>
           <p class="provider-note">
-            本地兜底模型仅用于演示；真实大模型接口和自定义模型接口用于接入被测模型。
+            离线演示模式仅用于无真实接口时跑通流程；真实大模型接口和自定义模型接口用于接入被测模型。
           </p>
           <div class="debug-meta">
             <span>任务类型：{{ taskTypeLabel(selectedTask?.task_type) }}</span>
             <span>接入方式：{{ displayProvider(result?.provider_used || result?.model_provider || modelProvider) }}</span>
-            <span>模型名称：{{ result?.model_name || modelName }}</span>
+            <span>模型名称：{{ displayRunModelName }}</span>
           </div>
           <el-button
             type="primary"
@@ -57,6 +57,37 @@
             <span class="pulse-dot" />
             <span>{{ currentRunStage }}</span>
           </div>
+          <div class="quick-check-panel">
+            <div class="quick-check-head">
+              <strong>单条问答检测</strong>
+              <div class="quick-head-actions">
+                <span>不生成报告</span>
+                <el-button
+                  text
+                  size="small"
+                  :icon="RefreshLeft"
+                  :disabled="quickChecking || (!quickCheckText && !quickCheckResult)"
+                  @click="resetQuickCheck"
+                >
+                  清空
+                </el-button>
+              </div>
+            </div>
+            <el-input
+              v-model="quickCheckText"
+              type="textarea"
+              :rows="5"
+              placeholder="每行一句独立用户发言，例如：&#10;我想退出飞毛腿&#10;标准和低延迟区别在哪？"
+            />
+            <el-button
+              :loading="quickChecking"
+              :disabled="quickChecking"
+              style="width: 100%; margin-top: 10px"
+              @click="runQuickCheck"
+            >
+              检测单条问答
+            </el-button>
+          </div>
         </el-form>
       </div>
 
@@ -67,9 +98,56 @@
             <el-tag v-if="selectedCase" type="info">{{ caseModeLabel(selectedCase.case_mode) }}</el-tag>
             <el-tag v-if="selectedCase" type="info">安全上限 {{ selectedCase.max_turns }} 轮</el-tag>
             <el-tag v-if="result">Run #{{ result.run_id }}</el-tag>
+            <el-button
+              text
+              size="small"
+              :icon="RefreshLeft"
+              :disabled="running || (!messages.length && !report && !result && !quickCheckResult)"
+              @click="resetWorkspace"
+            >
+              清空记录
+            </el-button>
           </div>
         </div>
         <div class="conversation-scroll">
+          <div v-if="quickCheckResult" class="quick-check-main">
+            <div class="quick-check-main-head">
+              <div>
+                <span>单条问答检测结果</span>
+                <strong>{{ quickCheckResult.total_score }}</strong>
+              </div>
+              <small>每行用户发言独立评分，不生成正式报告。</small>
+            </div>
+            <el-table :data="quickCheckRows" class="quick-check-table">
+              <el-table-column prop="turn_index" label="序号" width="70" />
+              <el-table-column label="用户话" min-width="190">
+                <template #default="{ row }">
+                  <div class="quick-wrap">{{ row.user_message || '-' }}</div>
+                </template>
+              </el-table-column>
+              <el-table-column label="模型回复" min-width="260">
+                <template #default="{ row }">
+                  <div class="quick-wrap">{{ row.assistant_message || '-' }}</div>
+                </template>
+              </el-table-column>
+              <el-table-column prop="rule_score" label="单条分" width="90" />
+              <el-table-column label="命中 / 缺失" min-width="260">
+                <template #default="{ row }">
+                  <div class="quick-rule-tags">
+                    <el-tag v-for="rule in visibleRules(row.matched_rules, 4)" :key="`m-${row.turn_index}-${rule}`" type="success">
+                      {{ rule }}
+                    </el-tag>
+                    <el-tag v-for="rule in visibleRules([...row.missed_rules, ...row.violated_rules], 4)" :key="`f-${row.turn_index}-${rule}`" type="danger">
+                      {{ rule }}
+                    </el-tag>
+                    <span v-if="!row.matched_rules.length && !row.missed_rules.length && !row.violated_rules.length" class="muted">
+                      暂无规则结果
+                    </span>
+                  </div>
+                </template>
+              </el-table-column>
+            </el-table>
+          </div>
           <div v-if="workflowVisible" class="workflow-card">
             <div class="workflow-head">
               <span>评测工作流</span>
@@ -194,7 +272,7 @@
 <script setup>
 import { computed, onMounted, ref } from 'vue'
 import { ElMessage } from 'element-plus'
-import { Edit, Loading, Plus, VideoPlay, View, WarningFilled } from '@element-plus/icons-vue'
+import { Edit, Loading, Plus, RefreshLeft, VideoPlay, View, WarningFilled } from '@element-plus/icons-vue'
 import request from '../api/request'
 import CaseEditor from '../components/CaseEditor.vue'
 import ConversationTimeline from '../components/ConversationTimeline.vue'
@@ -216,6 +294,9 @@ const streamJudgeResult = ref(null)
 const streamDone = ref(false)
 const streamMode = ref('')
 const modelProvider = ref('mock_fallback')
+const quickCheckText = ref('')
+const quickChecking = ref(false)
+const quickCheckResult = ref(null)
 const caseEditorVisible = ref(false)
 const editingCase = ref(null)
 const providerOptions = PROVIDER_OPTIONS
@@ -241,6 +322,11 @@ const caseModeLabels = {
 const caseModeLabel = (mode) => caseModeLabels[mode] || caseModeLabels.branch
 const displayProvider = (provider) => providerDisplayName(provider)
 const modelName = computed(() => providerDisplayName(modelProvider.value))
+const displayRunModelName = computed(() => {
+  const provider = normalizeProvider(result.value?.provider_used || result.value?.model_provider || modelProvider.value)
+  if (provider === 'mock_fallback') return '不适用（内置演示）'
+  return result.value?.model_name || modelName.value
+})
 const taskTypeLabel = (type) => {
   const labels = {
     rider_outbound: '飞毛腿骑手外呼',
@@ -298,6 +384,7 @@ const pendingRules = computed(() => {
   const active = report.value?.active_rules || report.value?.activeRules || {}
   return report.value?.pending_rules || report.value?.pendingRules || active.pending_rules || active.pendingRules || []
 })
+const quickCheckRows = computed(() => quickCheckResult.value?.turns || [])
 const isExcelOutboundTask = (task) =>
   task.data_source === 'excel_desensitized' ||
   ['rider_outbound', 'course_platform_outbound'].includes(task.task_type) ||
@@ -369,6 +456,17 @@ const resetEvaluationState = () => {
   currentStageMessage.value = ''
 }
 
+const resetQuickCheck = () => {
+  quickCheckText.value = ''
+  quickCheckResult.value = null
+}
+
+const resetWorkspace = () => {
+  if (running.value) return
+  resetEvaluationState()
+  quickCheckResult.value = null
+}
+
 const loadTasks = async () => {
   tasks.value = preferExcelTasks(await request.get('/api/tasks'))
   if (tasks.value.length) taskId.value = tasks.value[0].id
@@ -406,6 +504,36 @@ const handleCaseSaved = async (savedCase) => {
   taskId.value = savedCase.task_id
   await loadCases()
   caseId.value = savedCase.id
+}
+
+const runQuickCheck = async () => {
+  if (!taskId.value || !caseId.value || !modelProvider.value) {
+    ElMessage.warning('请先选择任务、用例和被测模型接入方式')
+    return
+  }
+  const userMessages = quickCheckText.value
+    .split('\n')
+    .map((item) => item.trim())
+    .filter(Boolean)
+  if (!userMessages.length) {
+    ElMessage.warning('请至少输入一句用户发言')
+    return
+  }
+  quickChecking.value = true
+  try {
+    quickCheckResult.value = await request.post('/api/runs/quick-check', {
+      task_id: taskId.value,
+      case_id: caseId.value,
+      model_provider: modelProvider.value,
+      user_messages: userMessages,
+      include_opening: false
+    })
+    ElMessage.success('快速检测完成')
+  } catch (error) {
+    ElMessage.error(error.message || '快速检测失败')
+  } finally {
+    quickChecking.value = false
+  }
 }
 
 const start = async () => {
@@ -724,6 +852,116 @@ onMounted(async () => {
   font-size: 12px;
 }
 
+.quick-check-panel {
+  display: grid;
+  gap: 10px;
+  margin-top: 16px;
+  padding-top: 14px;
+  border-top: 1px solid var(--line);
+}
+
+.quick-check-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  align-items: center;
+}
+
+.quick-check-head strong {
+  color: var(--text);
+  font-size: 14px;
+}
+
+.quick-check-head span {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.quick-head-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.quick-check-result {
+  display: grid;
+  gap: 10px;
+}
+
+.quick-check-main {
+  display: grid;
+  gap: 12px;
+  padding: 16px;
+  margin-bottom: 14px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: linear-gradient(180deg, rgba(15, 23, 34, 0.9), rgba(12, 18, 27, 0.82));
+  box-shadow: inset 0 1px 0 rgba(148, 163, 184, 0.06);
+}
+
+.quick-check-main-head {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.quick-check-main-head div {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+}
+
+.quick-check-main-head span,
+.quick-check-main-head small {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.quick-check-main-head strong {
+  color: var(--cyan);
+  font-size: 34px;
+  line-height: 1;
+}
+
+.quick-check-table :deep(.cell) {
+  white-space: normal;
+  line-height: 1.45;
+}
+
+.quick-wrap {
+  white-space: normal;
+  word-break: break-word;
+  line-height: 1.55;
+}
+
+.quick-score {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: rgba(15, 23, 34, 0.58);
+}
+
+.quick-score span {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.quick-score strong {
+  color: var(--cyan);
+  font-size: 22px;
+}
+
+.quick-rule-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+
 .pulse-dot {
   width: 8px;
   height: 8px;
@@ -736,6 +974,7 @@ onMounted(async () => {
 .conversation-title-tags {
   display: flex;
   flex-wrap: wrap;
+  align-items: center;
   gap: 8px;
   justify-content: flex-end;
 }

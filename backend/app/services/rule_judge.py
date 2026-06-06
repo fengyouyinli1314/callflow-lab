@@ -27,6 +27,135 @@ METRIC_NAMES = {
     "response_quality": "回复质量",
 }
 
+CASE_MODE_LABELS = {
+    "branch": "分支专项用例",
+    "full_flow": "完整流程覆盖用例",
+    "abnormal_exit": "异常终止用例",
+}
+
+CASE_FOCUS_LABELS = {
+    "normal_delivery": "骑手正常配送主流程",
+    "unwilling_delivery": "骑手不想配送分支",
+    "contract_impact": "合同影响咨询分支",
+    "exit_flying_leg": "退出飞毛腿咨询分支",
+    "bad_weather": "恶劣天气配送分支",
+    "ranking_question": "报名排名咨询分支",
+    "reward_question": "奖励咨询分支",
+    "course_full_flow": "课程直播完整主流程",
+    "responsible_person": "负责人正常沟通分支",
+    "non_responsible_person": "非负责人转达分支",
+    "busy_merchant": "商家忙碌分支",
+    "driving_merchant": "商家开车异常终止分支",
+    "live_type_difference": "直播类型区别咨询分支",
+    "third_party_config_missing": "第三方配置咨询分支",
+    "fee_or_coupon": "费用或优惠咨询分支",
+    "generic": "通用外呼分支",
+}
+
+COURSE_STAGE_LABELS = {
+    "identity_check": "确认接听人身份",
+    "upgrade_intro": "说明产品升级",
+    "awareness_check": "确认是否知晓升级",
+    "live_difference": "解释标准直播与低延迟直播区别",
+    "publish_method_check": "确认发布方式",
+    "configuration_guidance": "指导配置路径",
+    "fee_check": "说明费用差异",
+    "enterprise_wechat": "说明企业微信添加方式",
+    "closing": "结束或稍后再联系",
+    "case_triggered": "按当前用例分支检查",
+}
+
+MATCHED_RULE_ALIASES = {
+    "全流程覆盖：确认身份": ["是否确认骑手身份", "确认骑手身份"],
+    "全流程覆盖：告知今天飞毛腿合同已生效": [
+        "是否告知飞毛腿合同已生效",
+        "是否告知飞毛腿合同已签署并生效",
+        "是否告知飞毛腿合同已经签署并生效",
+        "是否告知飞毛腿合同已经署并生效",
+        "必须告知合同已生效",
+        "告知飞毛腿合同已生效",
+    ],
+    "全流程覆盖：说明午晚高峰和单量要求": [
+        "是否说明单日/多日合同完成要求",
+        "是否说明不完成可能影响合同或派单",
+        "必须说明单日/多日完成要求",
+        "必须提醒午晚高峰上线",
+        "说明午晚高峰上线和单量要求",
+    ],
+    "全流程覆盖：询问是否可以开始配送": [
+        "是否询问是否可以开始配送",
+        "必须询问是否开始配送",
+        "询问是否可以开始配送",
+    ],
+    "全流程覆盖：根据骑手态度鼓励挽留或安抚": [
+        "是否根据骑手态度鼓励挽留或安抚",
+        "是否安抚不想配送或情绪不满的骑手",
+        "挽留不想配送",
+        "是否说明雨天订单更多或完成有助于资格",
+    ],
+    "全流程覆盖：提醒注意安全": ["是否提醒安全", "必须提醒安全", "必须提醒配送安全"],
+    "全流程覆盖：说明排名与保资格规则": [
+        "是否说明报名按排名进行",
+        "是否说明不是站长干预",
+        "是否说明报名排名不是站长干预",
+        "是否提醒减少拒单取消超时有助于保住资格",
+        "报名排名不是站长干预",
+    ],
+    "是否说明报名按排名进行": ["是否说明报名排名不是站长干预"],
+    "是否说明不是站长干预": ["是否说明报名排名不是站长干预"],
+    "是否说明连续完成多日合同可能有额外奖励": ["回答奖励规则"],
+    "全流程覆盖：身份确认": ["是否确认对方是否负责人", "是否识别负责人", "确认对方是否负责人", "机构身份", "确认机构"],
+    "全流程覆盖：确认是否知情": ["是否询问对方是否知道低延迟直播", "知道低延迟直播"],
+    "全流程覆盖：传达升级内容": [
+        "是否进入产品升级说明",
+        "是否说明新增“标准直播”和“低延迟直播”",
+        "是否说明标准直播和低延迟直播",
+        "是否说明发布页分开显示标准直播和低延迟直播",
+        "是否简短说明升级内容",
+    ],
+    "全流程覆盖：说明标准直播和低延迟直播区别": [
+        "是否说明标准直播延迟 5-10 秒、费用较低",
+        "是否说明低延迟直播延迟 1-2 秒、互动更流畅",
+        "是否说明低延迟直播适合实时互动",
+        "是否说明标准直播和低延迟直播区别",
+        "是否说明标准直播和低延迟直播",
+        "是否说明标准直播适合大班课",
+        "是否说明低延迟适合小班或实操课",
+    ],
+    "全流程覆盖：说明价格差异": [
+        "是否说明费用差异或低延迟可能费用更高",
+        "是否说明低延迟可能费用更高",
+        "是否说明低延迟费用可能更高",
+    ],
+    "全流程覆盖：询问发布方式": [
+        "是否询问发布方式",
+        "是否询问当前发布方式",
+        "是否询问或判断当前发布方式",
+        "是否询问 Web 控制台 / 第三方系统 / SaaS 系统",
+        "是否询问 Web 控制台 / 校务系统A / SaaS系统B",
+    ],
+    "全流程覆盖：确认前端是否可见并说明配置路径": [
+        "是否说明配置路径",
+        "是否按对应配置路径引导",
+        "是否根据 Web 控制台 / 第三方系统给出不同引导",
+        "是否根据 Web 控制台给出路径",
+        "是否根据第三方系统给出路径",
+        "是否按第三方系统配置路径引导",
+        "若仍看不到，是否说明后台可能未配置并请明天查看",
+    ],
+    "全流程覆盖：检查学员端费用/加速线路费": [
+        "是否检查学员端费用/加速线路费",
+        "是否说明低延迟也要适用该费用",
+    ],
+    "全流程覆盖：企业微信添加": ["是否说明企业微信添加逻辑", "是否不泄露无关信息"],
+    "全流程覆盖：结束确认": ["是否确认是否还有问题", "是否在结束前确认是否还有问题", "是否礼貌结束", "是否给商家发言机会", "不能不给商家发言机会"],
+    "是否说明标准直播延迟 5-10 秒、费用较低": ["是否说明标准直播和低延迟直播区别"],
+    "是否说明低延迟直播延迟 1-2 秒、互动更流畅": ["是否说明低延迟直播适合实时互动"],
+    "是否说明低延迟可能费用更高": ["是否说明费用差异或低延迟可能费用更高"],
+    "是否询问当前发布方式": ["是否询问发布方式"],
+    "是否说明配置路径": ["是否按对应配置路径引导"],
+}
+
 
 
 RIDER_HIDDEN_GUARDRAIL_RULES = [
@@ -119,6 +248,8 @@ class RuleJudge:
     ) -> Dict[str, Any]:
         result = self._evaluate_rules(task_payload or {}, case_payload, history)
         result = self._apply_turn_rule_lifecycle(task_payload or {}, case_payload, history, result)
+        result = self._sync_display_untriggered_rules(result)
+        rule_trace = self._build_rule_trace(result, history, task_payload or {}, case_payload)
         required_count = max(len(result.get("required_rules", [])), 1)
         hidden_violated = result.get("hidden_guardrail_rules", {}).get("violated", [])
         score = (
@@ -151,6 +282,7 @@ class RuleJudge:
             "current_stage": result["current_stage"],
             "deduction_reason": result["deduction_reason"],
             "active_rules_explanation": self._active_rules_explanation(),
+            "rule_trace": rule_trace,
             "avg_latency_ms": latency_ms,
         }
 
@@ -163,6 +295,7 @@ class RuleJudge:
         rule_result = self._evaluate_rules(task_payload, case_payload, messages)
         rule_result = self._apply_full_flow_expected_steps(task_payload, case_payload, messages, rule_result)
         rule_result = self._resolve_completed_pending_rules(task_payload, case_payload, messages, rule_result)
+        rule_result = self._sync_display_untriggered_rules(rule_result)
         # Remove driving/busy rules from missed if never triggered in this conversation
         task_type = self._task_type(task_payload, case_payload)
         context_text = self._assistant_text(messages) + "\n" + "\n".join(item.get("user_message", "") for item in messages)
@@ -237,6 +370,7 @@ class RuleJudge:
         score = self._weighted_score(metrics)
 
         failed_rules = missed_rules + violated_rules
+        rule_result["failed_rules"] = failed_rules
         failure_cases = self._build_failure_cases(rule_result, messages)
         metric_details = self._build_metric_details(
             metrics,
@@ -256,6 +390,7 @@ class RuleJudge:
         evidence_messages = self._build_evidence_messages(rule_result, messages)
         score_formula = self._build_score_formula(metrics, score)
         suggestions = self._build_suggestions(missed_rules, violated_rules, repetition_penalty, unanswered_penalty)
+        rule_trace = self._build_rule_trace(rule_result, messages, task_payload, case_payload)
         explainability = {
             "overall_reason": (
                 f"本次评测完成 {len(messages)} 轮对话，命中 {len(matched_rules)} 条关键规则，"
@@ -295,6 +430,7 @@ class RuleJudge:
             "full_flow_expected_steps": rule_result.get("full_flow_expected_steps", {}),
             "late_satisfied_rules": late_satisfied_rules,
             "rule_lifecycle": rule_result.get("rule_lifecycle", {}),
+            "rule_trace": rule_trace,
         }
 
         return {
@@ -325,6 +461,7 @@ class RuleJudge:
             "explainability": explainability,
             "evidence_messages": evidence_messages,
             "score_formula": score_formula,
+            "rule_trace": rule_trace,
         }
 
     def _evaluate_rules(
@@ -600,7 +737,11 @@ class RuleJudge:
                     rule_result["active_rules"]["active_rule_names"].append(rule)
                 if rule not in rule_result["matched_rules"]:
                     rule_result["matched_rules"].append(rule)
-                    rule_result["matched_evidence"][rule] = self._fallback_evidence(messages)
+                rule_result["matched_evidence"][rule] = (
+                    self._full_flow_step_evidence(task_type, step, messages)
+                    or rule_result["matched_evidence"].get(rule)
+                    or self._fallback_evidence(messages)
+                )
             else:
                 if rule not in rule_result["pending_rules"]:
                     rule_result["pending_rules"].append(rule)
@@ -691,6 +832,33 @@ class RuleJudge:
         lifecycle["failed_final"] = rule_result["failed_rules"]
         return rule_result
 
+    def _sync_display_untriggered_rules(self, rule_result: Dict[str, Any]) -> Dict[str, Any]:
+        resolved = self._resolved_display_aliases(rule_result)
+        if not resolved:
+            return rule_result
+
+        protected = set(rule_result.get("failed_rules") or []) | set(rule_result.get("pending_rules") or [])
+
+        def keep(rule: str) -> bool:
+            return rule not in resolved or rule in protected
+
+        for bucket in ["untriggered_rules", "not_applicable_rules"]:
+            rule_result[bucket] = [rule for rule in rule_result.get(bucket, []) if keep(rule)]
+
+        active_rules = rule_result.setdefault("active_rules", {})
+        for bucket in ["untriggered_rules", "not_applicable_rules"]:
+            active_rules[bucket] = [rule for rule in active_rules.get(bucket, []) if keep(rule)]
+
+        visible = rule_result.setdefault("visible_business_rules", {})
+        visible["untriggered"] = [rule for rule in visible.get("untriggered", []) if keep(rule)]
+        return rule_result
+
+    def _resolved_display_aliases(self, rule_result: Dict[str, Any]) -> set[str]:
+        resolved = set(rule_result.get("matched_rules") or [])
+        for rule in list(resolved):
+            resolved.update(MATCHED_RULE_ALIASES.get(rule, []))
+        return resolved
+
     def _full_flow_expected_step_status(
         self,
         task_type: str,
@@ -759,6 +927,56 @@ class RuleJudge:
             }
             return bool(checks.get(step, False))
         return bool(assistant_text.strip())
+
+    def _full_flow_step_evidence(
+        self,
+        task_type: str,
+        step: str,
+        messages: List[Dict[str, Any]],
+    ) -> Dict[str, Any] | None:
+        keywords, prefer_last = self._full_flow_step_evidence_keywords(task_type, step)
+        if not keywords:
+            return None
+        matched: List[Dict[str, Any]] = []
+        for item in messages:
+            assistant = str(item.get("assistant_message", "") or "")
+            user = str(item.get("user_message", "") or "")
+            if self._has_any(f"{user}\n{assistant}", keywords):
+                evidence_text = assistant or user
+                if evidence_text:
+                    matched.append(self._evidence_row(item, evidence_text))
+        if not matched:
+            return None
+        return matched[-1] if prefer_last else matched[0]
+
+    def _full_flow_step_evidence_keywords(self, task_type: str, step: str) -> Tuple[List[str], bool]:
+        if task_type == "rider_outbound":
+            mapping = {
+                "确认身份": (["请问是", "是我", "王师傅", "骑手本人", "我是站长"], False),
+                "告知今天飞毛腿合同已生效": (["飞毛腿合同已生效", "合同已生效", "合同已签署", "签署并生效"], False),
+                "说明午晚高峰和单量要求": (["午晚高峰", "单日", "多日", "X单", "Y单", "X 单", "Y 单", "未完影响合同派单"], False),
+                "询问是否可以开始配送": (["可以开始配送", "是否可以开始配送", "开始配送吗"], False),
+                "根据骑手态度鼓励挽留或安抚": (["尽量", "建议", "理解", "有助保资格", "保资格", "额外奖励"], False),
+                "提醒注意安全": (["注意安全", "安全第一"], False),
+                "说明排名与保资格规则": (["系统排名", "按排名", "非站长", "拒单", "取消超时", "保资格"], False),
+                "结束确认": (["后续有问题", "再联系", "先这样", "注意安全"], True),
+            }
+            return mapping.get(step, ([], False))
+        if task_type == "course_platform_outbound":
+            mapping = {
+                "身份确认": (["负责人", "转达"], False),
+                "确认是否知情": (["您知道吗", "知道了", "不知道", "不知情", "没听过"], False),
+                "传达升级内容": (["直播产品升级", "低延迟直播选项", "标准和低延迟", "两个选项", "发布页以后分"], False),
+                "说明标准直播和低延迟直播区别": (["标准直播费用低", "延迟5-10秒", "低延迟1-2秒", "互动更流畅", "大班课", "小班", "实操"], False),
+                "说明价格差异": (["费用略高", "费用可能更高", "费用较低", "标准直播费用低"], False),
+                "询问发布方式": (["通过Web", "第三方发布", "SaaS", "发布方式", "Web还是第三方"], False),
+                "确认前端是否可见并说明配置路径": (["低延迟已显示吗", "进【我的】", "服务商", "直播平台管理", "服务产品", "勾选低延迟", "保存"], True),
+                "检查学员端费用/加速线路费": (["学员端", "附加费", "已设置费用", "适用该费用"], True),
+                "企业微信添加": (["当前号码能加", "企业微信加", "通过验证", "可添加手机号"], True),
+                "结束确认": (["还有其他问题吗", "清楚了", "先这样", "祝课程顺利", "招生满满"], True),
+            }
+            return mapping.get(step, ([], False))
+        return [], False
 
     def get_active_rules(
         self,
@@ -1804,7 +2022,7 @@ class RuleJudge:
             (["不编造其他退出方式", "避免编造其他退出方式"], ["按 App", "以 App", "飞毛腿报名", "不建议其他方式"]),
             (["先安抚"], ["理解", "抱歉", "辛苦", "天气"]),
             (["恶劣天气", "订单更多", "保住资格"], ["恶劣天气", "订单更多", "保持资格", "保住资格"]),
-            (["订单量更高", "订单更多", "完成有助保住资格", "完成有助于资格"], ["雨天单量更多", "订单更多", "保住资格", "完成有助"]),
+            (["订单量更高", "订单更多", "完成有助保住资格", "完成有助于资格"], ["雨天单量更多", "恶劣天气订单量更高", "订单量更高", "订单更多", "保住资格", "有助保资格", "完成有助"]),
             (["不强迫骑手冒险", "避免强迫冒险配送"], ["安全第一", "不强迫", "无法配送", "注意安全"]),
             (["报名按排名"], ["按排名", "排名安排", "报名是按排名", "排名靠前", "名额按排名", "系统排名", "排名规则"]),
             (["不是站长干预"], ["不是站长干预", "并非站长干预", "非站长", "非站长定", "不是我这边干预", "不是站长决定", "不是站长手动决定", "不是我能决定", "不是人为指定", "非人工指定"]),
@@ -2100,14 +2318,12 @@ class RuleJudge:
         messages: List[Dict[str, Any]],
         penalties: Dict[str, float],
     ) -> Dict[str, Any]:
-        first_evidence = self._fallback_evidence(messages)
-        matched_evidence = list(rule_result["matched_evidence"].values())
-        primary_positive = matched_evidence[0] if matched_evidence else first_evidence
-        last = messages[-1] if messages else {}
-        last_evidence = {
-            "turn_index": last.get("turn_index", first_evidence["turn_index"]),
-            "evidence_text": last.get("assistant_message", first_evidence["evidence_text"]),
-        }
+        task_evidence = self._metric_evidence(rule_result, messages, "task_completion")
+        instruction_evidence = self._metric_evidence(rule_result, messages, "instruction_following")
+        call_flow_evidence = self._metric_evidence(rule_result, messages, "call_flow_coverage")
+        constraint_evidence = self._metric_evidence(rule_result, messages, "constraint_compliance")
+        context_evidence = self._metric_evidence(rule_result, messages, "context_consistency")
+        quality_evidence = self._metric_evidence(rule_result, messages, "response_quality")
 
         task_reason = "关键任务规则覆盖完整。"
         if rule_result["missed_rules"]:
@@ -2163,40 +2379,157 @@ class RuleJudge:
             "task_completion": self._metric_detail(
                 metrics["task_completion"],
                 task_reason,
-                primary_positive,
+                task_evidence,
                 "围绕未覆盖规则补齐明确话术，并在结尾说明处理时效和下一步动作。",
             ),
             "instruction_following": self._metric_detail(
                 metrics["instruction_following"],
                 instruction_reason,
-                primary_positive,
+                instruction_evidence,
                 "将必须动作和禁止话术作为生成前检查清单，降低越权承诺风险。",
             ),
             "call_flow_coverage": self._metric_detail(
                 metrics["call_flow_coverage"],
                 call_flow_reason,
-                primary_positive,
+                call_flow_evidence,
                 "按任务指令中的外呼流程逐步推进，避免跳过身份确认、核心说明、分支引导和收尾确认。",
             ),
             "constraint_compliance": self._metric_detail(
                 metrics["constraint_compliance"],
                 constraint_reason,
-                first_evidence,
+                constraint_evidence,
                 "对开车、打断、优惠、排名、恶劣天气等高风险分支设置硬约束，先规避风险再继续沟通。",
             ),
             "context_consistency": self._metric_detail(
                 metrics["context_consistency"],
                 context_reason,
-                last_evidence,
+                context_evidence,
                 "每轮回复先承接外呼对象新增信息，再推进下一步流程。",
             ),
             "response_quality": self._metric_detail(
                 metrics["response_quality"],
                 quality_reason,
-                last_evidence,
+                quality_evidence,
                 "保持简短、自然、可执行的外呼话术，避免模板化重复和过长解释。",
             ),
         }
+
+    def _metric_evidence(
+        self,
+        rule_result: Dict[str, Any],
+        messages: List[Dict[str, Any]],
+        metric_key: str,
+    ) -> Dict[str, Any]:
+        failed_evidence: List[Dict[str, Any]] = []
+        for bucket in ["missed_evidence", "violated_evidence", "hidden_violated_evidence"]:
+            failed_evidence.extend((rule_result.get(bucket) or {}).values())
+        if failed_evidence:
+            return self._primary_evidence(failed_evidence)
+
+        matched = rule_result.get("matched_evidence") or {}
+        call_flow_rules = set(rule_result.get("call_flow_rules") or [])
+        active_rules = rule_result.get("active_rules") or {}
+        global_rules = set(active_rules.get("global_rules") or [])
+
+        if metric_key in {"task_completion", "call_flow_coverage"}:
+            evidence = [
+                evidence
+                for rule, evidence in matched.items()
+                if rule in call_flow_rules or rule.startswith("全流程覆盖")
+            ]
+            if evidence:
+                return self._primary_evidence(evidence, prefer="last")
+
+        if metric_key == "constraint_compliance":
+            if not failed_evidence:
+                return {"turn_index": None, "evidence_text": "未发现禁止规则或后台护栏违规。", "user_message": ""}
+            evidence = [
+                evidence
+                for rule, evidence in matched.items()
+                if self._has_any(rule, ["避免", "禁止", "不能", "简短", "自然", "不泄露", "礼貌结束"])
+            ]
+            if evidence:
+                return self._primary_evidence(evidence)
+
+        if metric_key == "instruction_following":
+            evidence = [
+                evidence
+                for rule, evidence in matched.items()
+                if rule not in global_rules
+            ]
+            if evidence:
+                return self._primary_evidence(evidence, prefer="first_non_opening")
+
+        if metric_key in {"context_consistency", "response_quality"}:
+            evidence = [
+                evidence
+                for rule, evidence in matched.items()
+                if self._has_any(rule, ["确认", "询问", "说明", "进入", "企业微信", "结束", "自然", "简短"])
+            ]
+            if evidence:
+                return self._primary_evidence(evidence, prefer="last_non_opening")
+
+        if matched:
+            return self._primary_evidence(list(matched.values()), prefer="first_non_opening")
+        return {"turn_index": None, "evidence_text": "暂无可归因规则证据。", "user_message": ""}
+
+    def _primary_evidence(
+        self,
+        evidence_items: List[Dict[str, Any]],
+        prefer: str = "first",
+    ) -> Dict[str, Any]:
+        cleaned = [
+            item
+            for item in evidence_items
+            if item and (item.get("evidence_text") or item.get("assistant_message"))
+        ]
+        if not cleaned:
+            return {"turn_index": None, "evidence_text": "", "user_message": ""}
+        unique: Dict[int, Dict[str, Any]] = {}
+        for item in cleaned:
+            try:
+                turn_index = int(item.get("turn_index"))
+            except (TypeError, ValueError):
+                continue
+            unique.setdefault(turn_index, item)
+        if not unique:
+            return {"turn_index": None, "evidence_text": "", "user_message": ""}
+
+        sorted_items = [unique[key] for key in sorted(unique)]
+        non_opening_items = [
+            item
+            for item in sorted_items
+            if self._safe_turn_index(item) > 0
+        ]
+        if prefer == "last":
+            selected = sorted_items[-1]
+        elif prefer == "last_non_opening":
+            selected = (non_opening_items or sorted_items)[-1]
+        elif prefer == "first_non_opening":
+            selected = (non_opening_items or sorted_items)[0]
+        else:
+            selected = sorted_items[0]
+
+        turn_index = self._safe_turn_index(selected)
+        supporting_turns = [self._safe_turn_index(item) for item in sorted_items]
+        supporting_texts = [
+            str(item.get("evidence_text") or item.get("assistant_message") or "")
+            for item in sorted_items
+            if item.get("evidence_text") or item.get("assistant_message")
+        ]
+        return {
+            "turn_index": turn_index,
+            "evidence_text": str(selected.get("evidence_text") or selected.get("assistant_message") or ""),
+            "user_message": selected.get("user_message", ""),
+            "supporting_evidence_turns": supporting_turns,
+            "supporting_evidence_texts": supporting_texts,
+        }
+
+    def _safe_turn_index(self, evidence: Dict[str, Any]) -> int:
+        try:
+            return int(evidence.get("turn_index"))
+        except (TypeError, ValueError):
+            return 0
 
     def _metric_detail(
         self,
@@ -2209,11 +2542,24 @@ class RuleJudge:
         return {
             "score": round(score, 2),
             "deduction_reason": reason,
-            "evidence_turns": [evidence.get("turn_index", 1)],
+            "evidence_turns": self._evidence_turns(evidence),
             "evidence_text": evidence_text,
             "evidence_snippets": [evidence_text] if evidence_text else [],
+            "supporting_evidence_turns": evidence.get("supporting_evidence_turns", []),
+            "supporting_evidence_texts": evidence.get("supporting_evidence_texts", []),
             "suggestion": suggestion,
         }
+
+    def _evidence_turns(self, evidence: Dict[str, Any]) -> List[int]:
+        turn_value = evidence.get("turn_index")
+        if isinstance(turn_value, list):
+            return [int(item) for item in turn_value if item is not None]
+        if turn_value is None:
+            return []
+        try:
+            return [int(turn_value)]
+        except (TypeError, ValueError):
+            return []
 
     def _metric_explanations(self, metric_details: Dict[str, Any]) -> List[Dict[str, Any]]:
         rows: List[Dict[str, Any]] = []
@@ -2258,16 +2604,276 @@ class RuleJudge:
             )
             row["related_rules"].append(rule)
 
-        if not evidence_by_turn:
-            for item in messages:
-                evidence_by_turn[int(item.get("turn_index", 1))] = {
-                    "turn_index": item.get("turn_index", 1),
-                    "user_message": item.get("user_message", ""),
-                    "assistant_message": item.get("assistant_message", ""),
-                    "related_rules": [],
-                }
-
         return sorted(evidence_by_turn.values(), key=lambda item: item["turn_index"])
+
+    def _build_rule_trace(
+        self,
+        rule_result: Dict[str, Any],
+        messages: List[Dict[str, Any]],
+        task_payload: Dict[str, Any],
+        case_payload: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        active_rules = rule_result.get("active_rules") or {}
+        hidden_rules = rule_result.get("hidden_guardrail_rules") or {}
+        rule_names = self._dedupe(
+            list(rule_result.get("active_rule_names") or [])
+            + list(active_rules.get("global_rules") or [])
+            + list(active_rules.get("stage_rules") or [])
+            + list(active_rules.get("case_rules") or [])
+            + list(active_rules.get("triggered_rules") or [])
+            + list(rule_result.get("pending_rules") or [])
+            + list(rule_result.get("untriggered_rules") or [])
+            + list(rule_result.get("not_applicable_rules") or [])
+            + list(hidden_rules.get("violated") or [])
+        )
+        source_map = self._rule_source_map(rule_result, task_payload, case_payload)
+        status_map = self._rule_status_map(rule_result)
+        rows: List[Dict[str, Any]] = []
+        for rule in rule_names:
+            source = source_map.get(rule) or self._infer_rule_source(rule, rule_result, task_payload, case_payload)
+            status = status_map.get(rule, "active")
+            evidence = self._rule_trace_evidence(rule, rule_result)
+            activation_turn = self._rule_activation_turn(status, evidence, messages)
+            evidence_text = str(evidence.get("evidence_text") or "")
+            user_message = str(evidence.get("user_message") or "")
+            rows.append(
+                {
+                    "rule_name": rule,
+                    "source": source,
+                    "source_label": self._rule_source_label(source),
+                    "status": status,
+                    "status_label": self._rule_status_label(status),
+                    "activation_turn": activation_turn,
+                    "activation_reason": self._rule_activation_reason(
+                        rule,
+                        source,
+                        status,
+                        activation_turn,
+                        user_message,
+                        rule_result,
+                        case_payload,
+                    ),
+                    "evidence_turn": evidence.get("turn_index"),
+                    "evidence_text": evidence_text,
+                    "user_message": user_message,
+                    "deduction_reason": self._rule_trace_deduction_reason(rule, status, rule_result),
+                    "case_mode": case_payload.get("case_mode", ""),
+                    "case_focus": rule_result.get("case_focus", ""),
+                    "current_stage": rule_result.get("current_stage", ""),
+                }
+            )
+        return {
+            "rows": rows,
+            "summary": {
+                "matched": len([item for item in rows if item["status"] == "matched"]),
+                "failed": len([item for item in rows if item["status"] == "failed"]),
+                "pending": len([item for item in rows if item["status"] == "pending"]),
+                "untriggered": len([item for item in rows if item["status"] == "untriggered"]),
+            },
+            "source_labels": {
+                "global": "全局规则",
+                "stage": "阶段规则",
+                "case": "用例规则",
+                "triggered": "触发规则",
+                "hidden_guardrail": "后台护栏",
+            },
+            "status_labels": {
+                "matched": "已命中",
+                "failed": "失败",
+                "pending": "待完成",
+                "untriggered": "未触发",
+                "active": "已激活",
+            },
+        }
+
+    def _rule_source_map(
+        self,
+        rule_result: Dict[str, Any],
+        task_payload: Dict[str, Any],
+        case_payload: Dict[str, Any],
+    ) -> Dict[str, str]:
+        active_rules = rule_result.get("active_rules") or {}
+        source_map: Dict[str, str] = {}
+        for source, bucket in [
+            ("global", "global_rules"),
+            ("case", "case_rules"),
+            ("stage", "stage_rules"),
+            ("triggered", "triggered_rules"),
+        ]:
+            for rule in active_rules.get(bucket) or []:
+                source_map[rule] = source
+        for rule in rule_result.get("pending_rules") or []:
+            source_map.setdefault(rule, self._infer_rule_source(rule, rule_result, task_payload, case_payload, pending=True))
+        for rule in rule_result.get("untriggered_rules") or []:
+            source_map.setdefault(rule, self._infer_rule_source(rule, rule_result, task_payload, case_payload))
+        for rule in rule_result.get("not_applicable_rules") or []:
+            source_map.setdefault(rule, self._infer_rule_source(rule, rule_result, task_payload, case_payload))
+        hidden_rules = rule_result.get("hidden_guardrail_rules") or {}
+        for rule in list(hidden_rules.get("passed") or []) + list(hidden_rules.get("violated") or []):
+            source_map[rule] = "hidden_guardrail"
+        return source_map
+
+    def _rule_status_map(self, rule_result: Dict[str, Any]) -> Dict[str, str]:
+        status_map: Dict[str, str] = {}
+        for rule in rule_result.get("matched_rules") or []:
+            status_map[rule] = "matched"
+        for rule in rule_result.get("failed_rules") or []:
+            status_map[rule] = "failed"
+        for rule in rule_result.get("forbidden_rules") or []:
+            status_map.setdefault(rule, "passed")
+        hidden_rules = rule_result.get("hidden_guardrail_rules") or {}
+        for rule in hidden_rules.get("passed") or []:
+            status_map.setdefault(rule, "passed")
+        for rule in hidden_rules.get("violated") or []:
+            status_map[rule] = "failed"
+        for rule in rule_result.get("pending_rules") or []:
+            status_map.setdefault(rule, "pending")
+        for rule in rule_result.get("untriggered_rules") or []:
+            status_map.setdefault(rule, "untriggered")
+        for rule in rule_result.get("not_applicable_rules") or []:
+            status_map.setdefault(rule, "untriggered")
+        return status_map
+
+    def _infer_rule_source(
+        self,
+        rule: str,
+        rule_result: Dict[str, Any],
+        task_payload: Dict[str, Any],
+        case_payload: Dict[str, Any],
+        pending: bool = False,
+    ) -> str:
+        if self._has_any(rule, ["自然简短", "机械重复", "职责外", "长篇", "语气词", "发言机会"]):
+            return "global"
+        case_rules = set((case_payload.get("required_rules") or []) + (case_payload.get("forbidden_rules") or []))
+        if rule in case_rules:
+            return "case"
+        task_type = self._task_type(task_payload, case_payload)
+        if pending and task_type == "course_platform_outbound":
+            return "stage"
+        if rule in set(self._all_triggerable_rules(task_type)):
+            return "triggered"
+        if self._has_any(rule, ["阶段", "流程", "负责人", "升级", "配置", "费用", "企业微信", "结束", "发布方式", "低延迟", "标准直播"]):
+            return "stage"
+        return "case"
+
+    def _rule_trace_evidence(self, rule: str, rule_result: Dict[str, Any]) -> Dict[str, Any]:
+        for bucket in ["matched_evidence", "missed_evidence", "violated_evidence", "hidden_violated_evidence"]:
+            evidence = (rule_result.get(bucket) or {}).get(rule)
+            if evidence:
+                return dict(evidence)
+        return {}
+
+    def _rule_activation_turn(
+        self,
+        status: str,
+        evidence: Dict[str, Any],
+        messages: List[Dict[str, Any]],
+    ) -> int | None:
+        if evidence.get("turn_index") is not None:
+            try:
+                return int(evidence.get("turn_index"))
+            except (TypeError, ValueError):
+                return None
+        if status == "pending" and messages:
+            try:
+                return int(messages[-1].get("turn_index") or len(messages))
+            except (TypeError, ValueError):
+                return len(messages)
+        return None
+
+    def _rule_activation_reason(
+        self,
+        rule: str,
+        source: str,
+        status: str,
+        activation_turn: int | None,
+        user_message: str,
+        rule_result: Dict[str, Any],
+        case_payload: Dict[str, Any],
+    ) -> str:
+        quote = self._short_text(user_message)
+        stage_label = self._stage_label(rule_result.get("current_stage", ""))
+        case_mode_label = self._case_mode_label(case_payload.get("case_mode", ""))
+        case_focus_label = self._case_focus_label(rule_result.get("case_focus", ""))
+        if status == "untriggered":
+            return "当前对话没有出现该规则的触发条件，因此只展示为未触发，不参与扣分。"
+        if status == "pending":
+            return (
+                f"当前对话处于“{stage_label}”，"
+                "这条规则属于后续流程节点，先标记为待完成，当前不扣分。"
+            )
+        if source == "global":
+            return "全局硬约束，每轮被测模型回复都会检查。"
+        if source == "stage":
+            return f"当前对话进入“{stage_label}”阶段，需要检查这条阶段规则。"
+        if source == "case":
+            return (
+                f"当前是“{case_mode_label}”，评测目标是“{case_focus_label}”，"
+                "因此这条用例规则需要检查。"
+            )
+        if source == "triggered":
+            if quote:
+                return f"用户第 {activation_turn or '-'} 轮明确提到：{quote}，因此激活此分支规则。"
+            return "用户对话内容命中该分支的触发条件，因此激活此分支规则。"
+        if source == "hidden_guardrail":
+            return "后台防串场护栏，每轮检查是否出现跨任务内容。"
+        return f"规则“{rule}”被当前用例或对话上下文激活。"
+
+    def _case_mode_label(self, case_mode: str) -> str:
+        return CASE_MODE_LABELS.get(str(case_mode or "").strip(), "未设置用例模式")
+
+    def _case_focus_label(self, case_focus: str) -> str:
+        return CASE_FOCUS_LABELS.get(str(case_focus or "").strip(), "当前用例目标")
+
+    def _stage_label(self, stage: str) -> str:
+        return COURSE_STAGE_LABELS.get(str(stage or "").strip(), "当前流程阶段")
+
+    def _rule_trace_deduction_reason(
+        self,
+        rule: str,
+        status: str,
+        rule_result: Dict[str, Any],
+    ) -> str:
+        if status == "matched":
+            return "已找到有效证据，不扣分。"
+        if status == "passed":
+            return "已检查，未发现违规，不扣分。"
+        if status == "pending":
+            return "后续流程待完成，当前不进入失败规则。"
+        if status == "untriggered":
+            return "未触发对应用户问题或流程条件，当前不参与扣分。"
+        if rule in set(rule_result.get("missed_rules") or []):
+            return f"必须满足的规则“{rule}”没有在对话中形成有效证据。"
+        if rule in set(rule_result.get("violated_rules") or []):
+            return f"回复命中了禁止话术或风险动作“{rule}”。"
+        if rule in set((rule_result.get("hidden_guardrail_rules") or {}).get("violated") or []):
+            return f"回复出现跨任务内容：“{rule}”。"
+        return "该规则未通过检查。"
+
+    def _rule_source_label(self, source: str) -> str:
+        return {
+            "global": "全局规则",
+            "case": "用例规则",
+            "stage": "阶段规则",
+            "triggered": "触发规则",
+            "hidden_guardrail": "后台护栏",
+        }.get(source, source or "未知来源")
+
+    def _rule_status_label(self, status: str) -> str:
+        return {
+            "matched": "已命中",
+            "failed": "失败",
+            "passed": "已通过",
+            "pending": "待完成",
+            "untriggered": "未触发",
+            "active": "已激活",
+        }.get(status, status or "未知状态")
+
+    def _short_text(self, text: str, limit: int = 80) -> str:
+        text = " ".join(str(text or "").split())
+        if len(text) <= limit:
+            return text
+        return text[: limit - 1] + "…"
 
     def _build_score_formula(self, metrics: Dict[str, float], score: float) -> Dict[str, Any]:
         components = {

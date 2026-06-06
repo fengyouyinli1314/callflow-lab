@@ -7,6 +7,13 @@ def _first_case(client):
     return task, case
 
 
+def _task_case_by_type(client, task_type):
+    tasks = client.get("/api/tasks").json()
+    task = next((item for item in tasks if item.get("task_type") == task_type), tasks[0])
+    case = client.get(f"/api/cases?task_id={task['id']}").json()[0]
+    return task, case
+
+
 def test_start_evaluation_and_get_messages(client):
     task, case = _first_case(client)
     response = client.post("/api/runs/start", json={"task_id": task["id"], "case_id": case["id"]})
@@ -43,6 +50,78 @@ def test_start_evaluation_and_get_messages(client):
     # Opening Line tasks store the model opening as turn 0, so total messages
     # can be one more than the configured business max_turns.
     assert 1 <= len(messages.json()) <= case["max_turns"] + 1
+
+
+def test_quick_check_manual_user_messages(client):
+    task, case = _task_case_by_type(client, "rider_outbound")
+    response = client.post(
+        "/api/runs/quick-check",
+        json={
+            "task_id": task["id"],
+            "case_id": case["id"],
+            "model_provider": "mock_fallback",
+            "user_messages": ["我想退出飞毛腿"],
+        },
+    )
+
+    assert response.status_code == 200
+    result = response.json()
+    assert result["success"] is True
+    assert result["provider_used"] == "mock_fallback"
+    assert result["total_score"] == 100
+    assert len(result["turns"]) == 1
+    assert result["turns"][-1]["assistant_message"]
+    assert result["turns"][-1]["rule_score"] == 100
+    assert "说明前一天 Z 点前取消" in result["turns"][-1]["matched_rules"]
+    assert "说明在 App 的飞毛腿报名中取消" in result["turns"][-1]["matched_rules"]
+    assert "说明次日生效" in result["turns"][-1]["matched_rules"]
+    assert "run_id" not in result
+    assert "report_id" not in result
+
+
+def test_quick_check_rider_driving_stops_delivery_push(client):
+    task, case = _task_case_by_type(client, "rider_outbound")
+    response = client.post(
+        "/api/runs/quick-check",
+        json={
+            "task_id": task["id"],
+            "case_id": case["id"],
+            "model_provider": "mock_fallback",
+            "user_messages": ["我在开车"],
+        },
+    )
+
+    assert response.status_code == 200
+    result = response.json()
+    turn = result["turns"][-1]
+    assert "稍后再打" in turn["assistant_message"]
+    assert turn["rule_score"] == 100
+    assert "说明稍后再联系" in turn["matched_rules"]
+    assert "不继续推进配送" in turn["matched_rules"]
+    assert not turn["missed_rules"]
+
+
+def test_quick_check_rider_benefit_answers_directly(client):
+    task, case = _task_case_by_type(client, "rider_outbound")
+    response = client.post(
+        "/api/runs/quick-check",
+        json={
+            "task_id": task["id"],
+            "case_id": case["id"],
+            "model_provider": "mock_fallback",
+            "user_messages": ["飞毛腿有什么好处"],
+        },
+    )
+
+    assert response.status_code == 200
+    result = response.json()
+    turn = result["turns"][-1]
+    assert "保资格" in turn["assistant_message"]
+    assert "额外奖励" in turn["assistant_message"]
+    assert "合同已生效" not in turn["assistant_message"]
+    assert turn["rule_score"] == 100
+    assert "说明完成有助保资格" in turn["matched_rules"]
+    assert "不回到主流程开场" in turn["matched_rules"]
 
 
 def test_memory_service_returns_fresh_initial_state():

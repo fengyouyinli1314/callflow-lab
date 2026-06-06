@@ -21,6 +21,8 @@ class Settings(BaseSettings):
     evaluator_api_key: str = ""
     evaluator_base_url: str = ""
     evaluator_model: str = ""
+    evaluator_timeout_seconds: int = 120
+    evaluator_max_tokens: int = 1800
     case_generator_provider: str = "mock"
     case_generator_api_key: str = ""
     case_generator_base_url: str = ""

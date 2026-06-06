@@ -36,6 +36,8 @@ class ReportRead(SQLModel):
     memory_state: Dict[str, Any]
     deduction_reason: str
     active_rules_explanation: str
+    rule_trace: Dict[str, Any]
+    judge_source: Dict[str, Any]
     llm_judge_result: Dict[str, Any]
     suggestions: List[str]
     metric_details: Dict[str, Any]

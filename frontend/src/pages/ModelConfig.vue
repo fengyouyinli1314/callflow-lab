@@ -3,7 +3,7 @@
     <div class="page-header">
       <div>
         <h1>模型配置</h1>
-        <p>查看被测模型接入状态；本地兜底模型仅作演示兜底，不代表真实模型能力，接口密钥只在后端环境变量中配置。</p>
+        <p>查看被测模型接入状态；离线演示模式仅用于无真实接口时跑通流程，不代表真实模型能力，接口密钥只在后端环境变量中配置。</p>
       </div>
       <el-button :icon="Refresh" @click="loadProviders">刷新</el-button>
     </div>
@@ -11,7 +11,7 @@
     <div class="panel provider-guidance">
       <div>
         <h2>真实模型接入说明</h2>
-        <p>本地兜底模型只用于无接口密钥或演示环境不可用时保证流程跑通；真实大模型接口和自定义模型接口才是真实模型接入方式。</p>
+        <p>离线演示模式只用于无接口密钥或演示环境不可用时保证流程跑通；真实大模型接口和自定义模型接口才是真实模型接入方式。</p>
       </div>
       <el-tag type="info">接口密钥不在前端保存</el-tag>
     </div>
@@ -39,7 +39,9 @@
         <el-table-column prop="base_url" label="接口地址" min-width="210" show-overflow-tooltip>
           <template #default="{ row }">{{ row.base_url || '-' }}</template>
         </el-table-column>
-        <el-table-column prop="model_name" label="模型名称" min-width="150" show-overflow-tooltip />
+        <el-table-column label="模型名称" min-width="150">
+          <template #default="{ row }">{{ displayModelName(row) }}</template>
+        </el-table-column>
         <el-table-column prop="endpoint" label="接口路径" min-width="210" show-overflow-tooltip>
           <template #default="{ row }">{{ row.endpoint || '-' }}</template>
         </el-table-column>
@@ -62,7 +64,7 @@
         <p>{{ displayProviderDescription(provider) }}</p>
         <div class="provider-meta">
           <span>类型</span><strong>{{ displayProviderType(provider) }}</strong>
-          <span>模型名称</span><strong>{{ provider.model_name || '-' }}</strong>
+          <span>模型名称</span><strong>{{ displayModelName(provider) }}</strong>
           <span>接口密钥</span><strong>{{ provider.api_key_configured ? '已在后端配置' : '未展示 / 未配置' }}</strong>
         </div>
       </div>
@@ -83,6 +85,8 @@ const testing = ref('')
 const displayProvider = (provider) => providerDisplayName(provider)
 const displayProviderDescription = (provider) => providerDescription(provider.name, provider.description)
 const displayProviderType = (provider) => providerTypeLabel(provider.name, provider.type)
+const displayModelName = (provider) =>
+  provider.name === 'mock_fallback' ? '不适用（内置演示）' : provider.model_name || '-'
 
 const loadProviders = async () => {
   loading.value = true

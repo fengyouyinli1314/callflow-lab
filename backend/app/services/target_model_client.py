@@ -309,8 +309,13 @@ class TargetModelClient:
             reply = self._rider_rank_qualification_reply()
         elif stage == "reward":
             reply = self._rider_reward_reply()
+        elif stage == "benefit":
+            reply = self._rider_benefit_reply()
         elif stage == "out_of_scope":
-            reply = "我同事确认后回电，先答我能答的。"
+            reply = self._rider_out_of_scope_reply()
+        elif stage == "driver":
+            reply = "那我稍后再打。"
+            should_close = True
         elif stage == "accepted":
             if "已提醒安全" not in said:
                 reply = "好的，尽量完成，注意安全；恶劣天气订单量更高，有助保资格。"
@@ -973,18 +978,22 @@ class TargetModelClient:
             return self._rider_exit_reply()
         if stage == "reward" or self._has_any(last_user, ["奖励", "补贴", "激励", "加钱", "W 天", "W天"]):
             return self._rider_reward_reply()
+        if stage == "benefit" or self._has_any(last_user, ["好处", "优势", "有什么用", "有啥用", "为什么参加"]):
+            return self._rider_benefit_reply()
         if stage == "rank" or self._has_any(last_user, ["排名", "名额", "资格", "站长"]):
             return self._rider_rank_qualification_reply()
         if stage == "weather" or self._has_any(last_user, ["下雨", "雨天", "天气", "安全"]):
             if self._has_any(last_user, ["排名", "名额", "资格", "拒单", "取消", "超时"]):
                 return "安全第一；名额按系统排名，非站长定，少拒单取消超时保资格。"
             return "理解，安全第一；雨天订单更多，有助保资格。"
+        if stage == "driver" or self._has_any(last_user, ["开车", "路上", "不方便说"]):
+            return "那我稍后再打。"
         if stage in {"reject_delivery", "hesitant_delivery"}:
             return self._rider_unwilling_fallback()
         if self._rider_mentions_contract_requirement(text):
             return self._rider_contract_requirement_reply()
         if self._has_any(text, ["同事确认", "再回电"]):
-            return "我同事确认后回电，先答我能答的。"
+            return self._rider_out_of_scope_reply()
         return self._rider_next_flow_reply(said, last_user) or self._trim(text, 30)
 
     def _rider_mentions_contract_requirement(self, text: str) -> bool:
@@ -1161,12 +1170,18 @@ class TargetModelClient:
                 "reward": [
                     self._rider_reward_reply(),
                 ],
+                "benefit": [
+                    self._rider_benefit_reply(),
+                ],
                 "hesitant_delivery": [
                     self._rider_unwilling_fallback(),
                     self._rider_reward_reply(),
                 ],
                 "out_of_scope": [
-                    "我同事确认后回电，先答我能答的。",
+                    self._rider_out_of_scope_reply(),
+                ],
+                "driver": [
+                    "那我稍后再打。",
                 ],
                 "reject_delivery": [
                     self._rider_unwilling_fallback(),
@@ -1287,6 +1302,8 @@ class TargetModelClient:
         if task_type == "course_platform_outbound":
             return self._has_any(reply, ["稍后再打", "祝课程顺利", "后续可再联系"])
         if task_type == "rider_outbound":
+            if dialogue_state.get("current_stage") == "driver":
+                return self._has_any(reply, ["稍后再打", "不打扰", "注意安全"])
             said = set(dialogue_state.get("assistant_said_topics") or [])
             if self._has_any(reply, ["后续有问题再联系"]):
                 return True
@@ -1508,12 +1525,18 @@ class TargetModelClient:
             and self._has_any(last_user, ["影响", "资格", "名额", "保住"])
         )
         reward_requested = stage == "reward" or self._has_any(last_user, ["奖励", "补贴", "激励", "加钱", "W 天", "W天"])
+        benefit_requested = stage == "benefit" or self._has_any(last_user, ["好处", "优势", "有什么用", "有啥用", "为什么参加"])
+        driver_requested = stage == "driver" or self._has_any(last_user, ["开车", "路上", "不方便说"])
 
         asks_user_to_verify_contract = self._has_any(
             text,
             ["合同是否已经生效", "合同是否已生效", "确认一下你的合同", "确认下你的合同", "合同生效了吗"],
         )
-        if asks_user_to_verify_contract:
+        if driver_requested:
+            repaired = "那我稍后再打。"
+        elif benefit_requested:
+            repaired = self._rider_benefit_reply()
+        elif asks_user_to_verify_contract:
             repaired = "飞毛腿合同已生效，可以开始配送吗？"
         elif self._rider_contract_requirement_invalid(text):
             repaired = self._rider_peak_contract_reply() if stage in {"opening", "peak_online", "start_delivery"} or self._has_any(text, ["高峰", "午餐", "晚餐"]) else self._rider_contract_requirement_reply()
@@ -1555,7 +1578,7 @@ class TargetModelClient:
         ):
             repaired = "少拒单取消超时，有助保资格。"
         elif stage == "out_of_scope" and not self._has_any(text, ["同事确认", "再回电"]):
-            repaired = "我同事确认后回电，先答我能答的。"
+            repaired = self._rider_out_of_scope_reply()
         elif stage == "accepted" and not self._has_any(text, ["注意安全", "辛苦", "先这样", "后续"]):
             repaired = "辛苦了，今天跑单注意安全。"
 
@@ -1719,6 +1742,7 @@ class TargetModelClient:
         elif task_type == "rider_outbound":
             system += (
                 "除第0轮开场外，每次回复控制在30字内；已说过的内容不要原样重复，应推进下一个未覆盖流程点。"
+                "如果当前是单条问答检测或用户直接问 FAQ，必须先直接回答用户这一句，不要强行回到“合同已生效，可以开始配送吗”。"
                 "飞毛腿递进式外呼按：确认身份、告知今天合同已签署并生效、"
                 "提醒午餐/晚餐高峰上线、说明“单日合同生效当天必须完成 X 单；多日合同每天必须完成 Y 单；未完成合同及派单可能受影响”、询问能否开始配送、"
                 "根据骑手态度鼓励挽留或安抚、提醒注意安全、最后补充说明报名按系统排名且不是站长人工干预，"
@@ -1731,8 +1755,9 @@ class TargetModelClient:
                 "连续完成 W 天多日合同且每天完成 Y 单，将获得额外奖励，例如每单多 +$ 元。"
                 "如用户问退出、不参加或取消，必须回答：如需退出飞毛腿，必须在前一天 Z 点之前在 App 的“飞毛腿报名”中取消；次日生效。"
                 "如用户问奖励或激励，必须回答：连续完成 W 天多日合同，且每天完成 Y 单，将获得额外奖励，例如与单日合同相比每单多 +$ 元。"
+                "如用户问飞毛腿有什么好处、优势或有什么用，必须回答：完成有助保资格，连续达标可获额外奖励。"
                 "如用户问单日/多日或没完成，必须同时说明 X 单/Y 单和合同及派单影响。"
-                "超出职责问题只有用户主动追问时再回答。"
+                "超出职责问题只有用户主动追问平台算法、派单少、工资、保险、工伤、赔偿、社保等职责外内容时再回答：我向同事确认后再回电给你。我现在能回答的先回答。"
                 "不要反问骑手合同是否生效；这是站长需要告知的信息。"
             )
         case_context = dict(case_payload)
@@ -1948,6 +1973,12 @@ class TargetModelClient:
 
     def _rider_reward_reply(self) -> str:
         return "连续W天每天Y单，可获额外奖励，每单多+$。"
+
+    def _rider_benefit_reply(self) -> str:
+        return "完成有助保资格，连续达标可获额外奖励。"
+
+    def _rider_out_of_scope_reply(self) -> str:
+        return "我向同事确认后再回电给你。我现在能回答的先回答。"
 
     def _rider_exit_reply(self) -> str:
         return "前一天Z点前在App飞毛腿报名取消，次日生效。"

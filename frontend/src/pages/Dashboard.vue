@@ -64,8 +64,10 @@
       </div>
       <el-empty v-if="!recentBatches.length" description="暂无批量评测结果" />
       <el-table v-else :data="recentBatches">
-        <el-table-column prop="batch_id" label="批次" width="90">
-          <template #default="{ row }">#{{ row.batch_id }}</template>
+        <el-table-column prop="batch_id" label="批次" width="116">
+          <template #default="{ row }">
+            <span class="batch-pill">批次 {{ row.batch_id }}</span>
+          </template>
         </el-table-column>
         <el-table-column prop="status" label="状态" width="120">
           <template #default="{ row }">
@@ -293,6 +295,20 @@ onBeforeUnmount(() => {
 
 .empty-chart {
   min-height: 320px;
+}
+
+.batch-pill {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 70px;
+  padding: 3px 8px;
+  border: 1px solid rgba(45, 212, 191, 0.24);
+  border-radius: 999px;
+  color: var(--text);
+  background: rgba(45, 212, 191, 0.08);
+  font-size: 12px;
+  font-weight: 700;
 }
 
 @media (max-width: 720px) {

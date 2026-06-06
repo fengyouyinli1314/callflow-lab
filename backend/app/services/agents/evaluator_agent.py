@@ -34,6 +34,8 @@ class EvaluatorAgent:
         self.api_key = settings.evaluator_api_key or ""
         self.base_url = (settings.evaluator_base_url or "").rstrip("/")
         self.model = (settings.evaluator_model or DEFAULT_EVALUATOR_MODEL).strip() or DEFAULT_EVALUATOR_MODEL
+        self.timeout_seconds = max(10, int(settings.evaluator_timeout_seconds or 120))
+        self.max_tokens = max(256, int(settings.evaluator_max_tokens or 1800))
 
     def evaluate(
         self,
@@ -59,18 +61,17 @@ class EvaluatorAgent:
             fallback["fallback_reason"] = "EVALUATOR_API_KEY or EVALUATOR_BASE_URL is not configured"
             return fallback
 
-        content = self._call_openai_compatible(
+        content, request_error = self._call_openai_compatible(
             task_payload,
             case_payload,
             full_messages,
             rule_judge_result,
             retrieved_knowledge,
         )
+        if request_error:
+            return self._external_fallback(fallback, request_error)
         if not content:
-            fallback["provider_requested"] = "openai_compatible"
-            fallback["fallback_used"] = True
-            fallback["fallback_reason"] = "openai_compatible evaluator returned empty or invalid response"
-            return fallback
+            return self._external_fallback(fallback, "openai_compatible evaluator returned empty response")
         return self._safe_json(content, fallback)
 
     def _mock_evaluate(
@@ -121,7 +122,7 @@ class EvaluatorAgent:
         result = {
             **adjusted,
             "overall_reason": (
-                "mock evaluator 基于规则评分结果生成语义评估兜底："
+                "规则辅助评审基于本轮评分结果生成综合结论："
                 f"命中 {len(rule_result.get('matched_rules', []))} 条规则，失败 {len(failed_rules)} 条。"
             ),
             "evidence": evidence,
@@ -144,13 +145,14 @@ class EvaluatorAgent:
         messages: List[Dict[str, Any]],
         rule_result: Dict[str, Any],
         retrieved_knowledge: List[Dict[str, Any]],
-    ) -> str:
+    ) -> tuple[str, str]:
         url = self.base_url
         if not url.endswith("/chat/completions"):
             url = f"{url}/chat/completions"
         payload = {
             "model": self.model,
             "temperature": 0.1,
+            "max_tokens": self.max_tokens,
             "messages": [
                 {"role": "system", "content": self._system_prompt()},
                 {
@@ -172,20 +174,32 @@ class EvaluatorAgent:
             method="POST",
         )
         try:
-            with urllib.request.urlopen(request, timeout=45) as response:
+            with urllib.request.urlopen(request, timeout=self.timeout_seconds) as response:
                 data = json.loads(response.read().decode("utf-8"))
-        except (OSError, urllib.error.URLError, json.JSONDecodeError) as exc:
+        except urllib.error.HTTPError as exc:
+            logger.warning("evaluator openai_compatible HTTP error: %s", exc)
+            return "", f"openai_compatible evaluator HTTP error {exc.code}"
+        except urllib.error.URLError as exc:
             logger.warning("evaluator openai_compatible request failed: %s", exc)
-            return ""
+            return "", "openai_compatible evaluator request failed"
+        except json.JSONDecodeError as exc:
+            logger.warning("evaluator openai_compatible returned non-JSON API response: %s", exc)
+            return "", "openai_compatible evaluator returned non-JSON API response"
+        except OSError as exc:
+            logger.warning("evaluator openai_compatible request failed: %s", exc)
+            return "", "openai_compatible evaluator request failed"
 
         if isinstance(data, dict):
+            if data.get("error"):
+                logger.warning("evaluator openai_compatible API error response: %s", data.get("error"))
+                return "", "openai_compatible evaluator API error response"
             choices = data.get("choices")
             if choices and isinstance(choices, list):
-                return str(choices[0].get("message", {}).get("content", "") or "")
+                return str(choices[0].get("message", {}).get("content", "") or ""), ""
             for key in ["content", "text", "message", "output_text"]:
                 if data.get(key):
-                    return str(data[key])
-        return ""
+                    return str(data[key]), ""
+        return "", ""
 
     def _system_prompt(self) -> str:
         return (
@@ -270,11 +284,20 @@ class EvaluatorAgent:
             start = content.find("{")
             end = content.rfind("}")
             if start < 0 or end <= start:
-                return fallback
+                return self._external_fallback(fallback, "openai_compatible evaluator returned invalid JSON response")
             data = json.loads(content[start : end + 1])
         except (TypeError, ValueError, json.JSONDecodeError):
-            return fallback
+            return self._external_fallback(fallback, "openai_compatible evaluator returned invalid JSON response")
         return self._normalize_llm_result(data, fallback)
+
+    def _external_fallback(self, fallback: Dict[str, Any], reason: str) -> Dict[str, Any]:
+        result = dict(fallback)
+        result["provider"] = "mock"
+        result["provider_requested"] = "openai_compatible"
+        result["model"] = self.model
+        result["fallback_used"] = True
+        result["fallback_reason"] = reason
+        return result
 
     def _normalize_llm_result(self, data: Dict[str, Any], fallback: Dict[str, Any]) -> Dict[str, Any]:
         merged = {**fallback, **data}
@@ -303,6 +326,7 @@ class EvaluatorAgent:
         merged["provider_requested"] = "openai_compatible"
         merged["model"] = self.model
         merged["fallback_used"] = False
+        merged["fallback_reason"] = ""
         merged["score"] = self._weighted_score(merged)
         return merged
 
@@ -324,7 +348,7 @@ class EvaluatorAgent:
                 turn_index = 1
             row = {
                 "turn_index": turn_index,
-                "issue": str(item.get("issue") or item.get("rule_name") or "语义评估扣分点"),
+                "issue": str(item.get("issue") or item.get("rule_name") or "综合评估扣分点"),
                 "quote": str(item.get("quote") or item.get("evidence") or ""),
                 "deduction": str(item.get("deduction") or item.get("deduction_reason") or ""),
             }
@@ -392,7 +416,7 @@ class EvaluatorAgent:
                     "turn_index": first.get("turn_index", 1),
                     "issue": "未发现明显硬规则失败",
                     "quote": first.get("assistant_message", ""),
-                    "deduction": "无明显扣分，保留首轮被测模型回复作为语义评估证据。",
+                    "deduction": "无明显扣分，保留首轮被测模型回复作为综合评估证据。",
                 }
             ]
         return []

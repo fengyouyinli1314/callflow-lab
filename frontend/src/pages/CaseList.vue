@@ -17,40 +17,41 @@
           <el-option v-for="task in tasks" :key="task.id" :label="task.name" :value="task.id" />
         </el-select>
       </div>
-      <el-table :data="cases" v-loading="loading">
-        <el-table-column prop="name" label="用例名称" min-width="170" />
-        <el-table-column prop="user_profile" label="用户画像" min-width="220" show-overflow-tooltip />
-        <el-table-column prop="initial_message" label="初始问题" min-width="260" show-overflow-tooltip />
-        <el-table-column prop="difficulty" label="难度" width="90" />
+      <el-table :data="cases" v-loading="loading" class="case-table">
+        <el-table-column prop="name" label="用例名称" min-width="190">
+          <template #default="{ row }">
+            <div class="wrap-cell">{{ row.name || '-' }}</div>
+          </template>
+        </el-table-column>
         <el-table-column label="模式" width="120">
           <template #default="{ row }">
             <el-tag type="info">{{ caseModeLabel(row.case_mode) }}</el-tag>
           </template>
         </el-table-column>
         <el-table-column prop="max_turns" label="最大轮数" width="100" />
-        <el-table-column label="必须满足规则" min-width="260">
+        <el-table-column label="必须满足规则" min-width="300">
           <template #default="{ row }">
             <div class="rule-tags">
               <el-tag v-for="rule in visibleRules(row.required_rules)" :key="rule" type="success">{{ rule }}</el-tag>
-              <el-tag v-if="hiddenRuleCount(row.required_rules)" type="info">+{{ hiddenRuleCount(row.required_rules) }}</el-tag>
               <span v-if="!hasRules(row.required_rules)" class="muted">暂无规则</span>
             </div>
           </template>
         </el-table-column>
-        <el-table-column label="禁止触发规则" min-width="260">
+        <el-table-column label="禁止触发规则" min-width="300">
           <template #default="{ row }">
             <div class="rule-tags">
               <el-tag v-for="rule in visibleRules(row.forbidden_rules)" :key="rule" type="danger">{{ rule }}</el-tag>
-              <el-tag v-if="hiddenRuleCount(row.forbidden_rules)" type="info">+{{ hiddenRuleCount(row.forbidden_rules) }}</el-tag>
               <span v-if="!hasRules(row.forbidden_rules)" class="muted">暂无规则</span>
             </div>
           </template>
         </el-table-column>
         <el-table-column prop="user_behavior_type" label="行为类型" width="110" />
-        <el-table-column label="操作" width="150" fixed="right">
+        <el-table-column label="操作" width="118" fixed="right" align="center" header-align="center" class-name="actions-column">
           <template #default="{ row }">
-            <el-button :icon="Edit" text type="primary" @click="openEdit(row)">编辑</el-button>
-            <el-button :icon="Delete" text type="danger" @click="deleteCase(row)">删除</el-button>
+            <div class="case-actions">
+              <el-button size="small" :icon="Edit" @click="openEdit(row)">编辑</el-button>
+              <el-button size="small" type="danger" plain :icon="Delete" @click="deleteCase(row)">删除</el-button>
+            </div>
           </template>
         </el-table-column>
       </el-table>
@@ -95,9 +96,21 @@
         class="draft-table"
         height="360"
       >
-        <el-table-column prop="name" label="用例名称" min-width="160" />
-        <el-table-column prop="user_profile" label="用户画像" min-width="150" show-overflow-tooltip />
-        <el-table-column prop="initial_message" label="初始问题" min-width="240" show-overflow-tooltip />
+        <el-table-column prop="name" label="用例名称" min-width="170">
+          <template #default="{ row }">
+            <div class="wrap-cell">{{ row.name || '-' }}</div>
+          </template>
+        </el-table-column>
+        <el-table-column prop="user_profile" label="用户画像" min-width="220">
+          <template #default="{ row }">
+            <div class="wrap-cell">{{ row.user_profile || '-' }}</div>
+          </template>
+        </el-table-column>
+        <el-table-column prop="initial_message" label="初始问题" min-width="220">
+          <template #default="{ row }">
+            <div class="wrap-cell">{{ row.initial_message || '-' }}</div>
+          </template>
+        </el-table-column>
         <el-table-column prop="difficulty" label="难度" width="82" />
         <el-table-column label="模式" width="120">
           <template #default="{ row }">
@@ -109,7 +122,6 @@
           <template #default="{ row }">
             <div class="rule-tags">
               <el-tag v-for="goal in visibleRules(row.expected_goals)" :key="goal" type="info">{{ goal }}</el-tag>
-              <el-tag v-if="hiddenRuleCount(row.expected_goals)" type="info">+{{ hiddenRuleCount(row.expected_goals) }}</el-tag>
             </div>
           </template>
         </el-table-column>
@@ -172,8 +184,7 @@ const generateForm = reactive({
   user_behavior_types: ['正常配合', '拒绝配合', '情绪不满', '反复追问', '信息缺失', '超范围问题']
 })
 
-const visibleRules = (rules = []) => (Array.isArray(rules) ? rules.slice(0, 2) : [])
-const hiddenRuleCount = (rules = []) => (Array.isArray(rules) && rules.length > 2 ? rules.length - 2 : 0)
+const visibleRules = (rules = []) => (Array.isArray(rules) ? rules : [])
 const hasRules = (rules = []) => Array.isArray(rules) && rules.length > 0
 const caseKey = (item) => `${item.task_id || ''}::${String(item.name || '').trim()}::${String(item.initial_message || '').trim()}`
 const dedupeCases = (items = []) => {
@@ -327,17 +338,63 @@ onMounted(async () => {
   margin-top: 8px;
 }
 
+.case-table {
+  --el-table-row-hover-bg-color: rgba(148, 163, 184, 0.06);
+}
+
+.case-table :deep(.cell) {
+  line-height: 1.45;
+  white-space: normal;
+}
+
+.case-table :deep(.el-table__body tr:hover > td.el-table__cell) {
+  background: rgba(148, 163, 184, 0.06);
+}
+
+.case-table :deep(.el-table-fixed-column--right) {
+  background: rgba(12, 18, 27, 0.98);
+}
+
+.wrap-cell {
+  color: var(--body-text);
+  line-height: 1.5;
+  white-space: normal;
+  word-break: break-word;
+}
+
+.case-actions {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: 64px;
+}
+
+.case-actions :deep(.el-button) {
+  width: 72px;
+  margin-left: 0;
+  justify-content: center;
+}
+
+.case-table :deep(.actions-column .cell) {
+  display: flex;
+  justify-content: center;
+}
+
 .rule-tags {
   display: flex;
   flex-wrap: wrap;
   gap: 6px;
-  max-height: 58px;
-  overflow: hidden;
 }
 
 .rule-tags :deep(.el-tag) {
-  max-width: 180px;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  height: auto;
+  min-height: 24px;
+  padding-top: 3px;
+  padding-bottom: 3px;
+  line-height: 1.35;
+  white-space: normal;
+  word-break: break-word;
 }
 </style>

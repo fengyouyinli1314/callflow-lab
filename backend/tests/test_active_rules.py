@@ -280,6 +280,25 @@ def test_rider_real_out_of_scope_question_triggers_callback_rule():
     assert "超范围问题是否说明向同事确认后再回电" in result["matched_rules"]
 
 
+def test_rider_external_benefit_question_is_not_repaired_to_opening():
+    from app.services.target_model_client import TargetModelClient
+
+    client = TargetModelClient("openai_compatible")
+    client._provider_reply = lambda *args, **kwargs: "飞毛腿合同已生效，可以开始配送吗？"
+
+    result = client.generate_reply(
+        {"task_type": "rider_outbound", "name": "飞毛腿骑手合同生效外呼评测"},
+        {"name": "单条好处检测", "initial_message": "是我，你说。"},
+        "飞毛腿有什么好处",
+        [],
+        {"quick_check": True},
+    )
+
+    assert "保资格" in result.content
+    assert "额外奖励" in result.content
+    assert "合同已生效" not in result.content
+
+
 def test_course_owner_first_turn_does_not_activate_driver_coupon_or_wechat_rules():
     judge = RuleJudge()
     task = {"task_type": "course_platform_outbound", "name": "课程直播产品升级外呼评测"}

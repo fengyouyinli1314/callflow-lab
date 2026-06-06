@@ -1,8 +1,8 @@
 const providerLabels = {
   mock_fallback: {
-    short: '本地兜底模型',
-    option: '本地兜底模型（仅演示）',
-    type: '本地兜底',
+    short: '离线演示模式',
+    option: '离线演示模式（无真实接口时使用）',
+    type: '演示模式',
     description: '用于无真实模型配置时跑通评测流程，不代表真实模型能力。'
   },
   openai_compatible: {
